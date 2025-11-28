@@ -1,0 +1,53 @@
+_format_version: "2.1"
+_transform: true
+
+# SỬA Ở ĐÂY: Dùng "services" thay vì "_services"
+services:
+  - name: auth-service
+    url: "http://auth-service:8080"
+    routes:
+      - name: auth-route
+        paths: ["/auth"]
+        strip_path: false
+
+  - name: core-service
+    url: "http://core-service:3000"
+    routes:
+      - name: api-route
+        paths: ["/api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+
+  - name: stream-service
+    url: "http://stream-service:3000"
+    routes:
+      - name: socketio-route
+        paths: ["/socket.io"]
+        strip_path: false
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          uri_param_names: ["token"]
+
+consumers:
+  - username: shared-auth-consumer
+    jwt_secrets:
+      - algorithm: RS256
+        key: "my-app-auth"
+        rsa_public_key: |
+          REPLACE_WITH_AUTH_SERVICE_PUBLIC_KEY_PEM
+
+# SỬA Ở ĐÂY: Dùng "plugins" thay vì "_plugins"
+plugins:
+  - name: cors
+    config:
+      origins: ["http://localhost:5173"]
+      methods: ["GET","POST","PUT","DELETE","OPTIONS"]
+      headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "Authorization"]
+      exposed_headers: ["X-Auth-Token"]
+      credentials: true
+      max_age: 3600

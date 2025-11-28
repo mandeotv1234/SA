@@ -1,0 +1,11 @@
+fastapi[all]
+uvicorn[standard]
+transformers
+torch
+scikit-learn
+shap
+pandas
+numpy
+python-dotenv
+confluent-kafka
+apscheduler

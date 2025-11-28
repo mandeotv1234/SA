@@ -1,0 +1,61 @@
+_format_version: "2.1"
+_transform: true
+
+# SỬA Ở ĐÂY: Dùng "services" thay vì "_services"
+services:
+  - name: auth-service
+    url: "http://auth-service:8080"
+    routes:
+      - name: auth-route
+        paths: ["/auth"]
+        strip_path: false
+
+  - name: core-service
+    url: "http://core-service:3000"
+    routes:
+      - name: api-route
+        paths: ["/api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+
+  - name: stream-service
+    url: "http://stream-service:3000"
+    routes:
+      - name: socketio-route
+        paths: ["/socket.io"]
+        strip_path: false
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          uri_param_names: ["token"]
+
+consumers:
+  - username: shared-auth-consumer
+    jwt_secrets:
+      - algorithm: RS256
+        key: "my-app-auth"
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1W4HxmDaLrRtv2RNYFaQ
+          f9/th0sm4BOPLf08FFy6IfNANlV81519VvKOYvIfn998kWRR/M/Gm/veNiP909fM
+          E+RazuVy08xq0e6ndlFNWlQZpppEFl0lbWAt2cqUjlmYqhTBXAahvErLcxN1sI0t
+          3MWgptdcFF9Zin2mMaQiCa3N7kAO+nJA1KFVi9vGxzt5CeNbMXS1v8Ie3N72LY0Y
+          udM/wRM85AJHlt2Gfoyc/uWkcu3xGVSu3wkfhjVapyNhOJk6KFj33ewrc93bcOv/
+          khSpKfAEMP2eYW3hv27H/cV+ecQmAXHzxc6umdH65T2i/uXuCOMVp7Xc6fV6uoqe
+          wwIDAQAB
+          -----END PUBLIC KEY-----
+
+# SỬA Ở ĐÂY: Dùng "plugins" thay vì "_plugins"
+plugins:
+  - name: cors
+    config:
+      origins: ["http://localhost:5173"]
+      methods: ["GET","POST","PUT","DELETE","OPTIONS"]
+      headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "Authorization"]
+      exposed_headers: ["X-Auth-Token"]
+      credentials: true
+      max_age: 3600

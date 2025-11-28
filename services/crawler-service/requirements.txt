@@ -1,0 +1,13 @@
+fastapi[all]
+uvicorn[standard]
+trafilatura
+requests
+python-dotenv
+confluent-kafka
+beautifulsoup4
+redis
+python-dateutil
+lxml
+
+# Google Gemini SDK
+google-generativeai

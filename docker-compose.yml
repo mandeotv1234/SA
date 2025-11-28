@@ -1,0 +1,212 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    environment:
+      CLUSTER_ID: "N9U05a1yRjKiav1x1Z2T4Q"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - "9092:9092"
+    healthcheck: # Thêm healthcheck để các service khác đợi Kafka
+      test: nc -z localhost 9092 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: appdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d appdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: timeseriesdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - tsdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------
+  # KONG SECTION (Đã sửa logic init)
+  # ---------------------------------------------------------
+  kong:
+    image: kong/kong-gateway:3.6
+    container_name: kong
+    ports:
+      - "8000:8000" # Proxy
+      - "8001:8001" # Admin API
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: "/kong/kong.yml"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      # Thêm biến này để cho phép Socket.IO đi qua websocket
+      KONG_HEADERS: "off" 
+    volumes:
+      - ./infra/kong_conf/kong.yml:/kong/kong.yml:ro
+    depends_on:
+      kong-init:
+        condition: service_completed_successfully # QUAN TRỌNG: Đợi init chạy xong mới start
+
+  kong-init:
+    image: python:3.11-slim
+    # Cài thư viện request để gọi Auth Service
+    command: >
+      sh -c "pip install requests pyyaml && python /app/infra/generate_kong_yml.py"
+    volumes:
+      - .:/app:rw
+    depends_on:
+      auth-service:
+        condition: service_started # Đợi Auth service bật lên đã
+    networks:
+      - default
+
+  # ---------------------------------------------------------
+  # APP SERVICES
+  # ---------------------------------------------------------
+  auth-service:
+    build:
+      context: ./services/auth-service
+    environment:
+      DATABASE_URL: postgresql://dev:dev@postgres:5432/appdb
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+    depends_on:
+      postgres:
+        condition: service_healthy # Đợi DB ready mới start app
+    ports:
+      - "8081:8080" # Host: 8081 -> Container: 8080
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/auth/public-key || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  core-service:
+    build:
+      context: ./services/core-service
+    environment:
+      DATABASE_URL: postgresql://dev:dev@timescaledb:5432/timeseriesdb
+      KAFKA_BROKERS: kafka:9092
+      MARKET_DATA_TOPIC: market_data
+      AI_INSIGHTS_TOPIC: ai_insights
+    depends_on:
+      - timescaledb
+      - kafka
+    ports:
+      - "3001:3000" # SỬA LỖI: Host 3001 -> Container 3000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  stream-service:
+    build:
+      context: ./services/stream-service
+    environment:
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      - kafka
+    ports:
+      - "3002:3000" # SỬA LỖI: Host 3002 -> Container 3000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  crawler-service:
+    build:
+      context: ./services/crawler-service
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      REDIS_URL: redis://redis:6379/0
+      NEWS_RAW_TOPIC: news_raw
+      LLM_API_URL: ""
+    depends_on:
+      - kafka
+      - redis
+    ports:
+      - "8003:8001" # SỬA LỖI: Host 8003 -> Container 8001 (để tránh đụng Kong 8001)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  ai-service:
+    build:
+      context: ./services/ai-service
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      NEWS_RAW_TOPIC: news_raw
+      NEWS_ANALYZED_TOPIC: news_analyzed
+      AI_INSIGHTS_TOPIC: ai_insights
+      FINBERT_MODEL: ProsusAI/finbert
+      CAUSAL_INTERVAL_MIN: 60
+    depends_on:
+      - kafka
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  web-frontend:
+    build:
+      context: ./web-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - core-service
+      - stream-service
+    environment:
+      # Frontend cần gọi vào Kong Gateway chứ không gọi trực tiếp service
+      VITE_API_URL: "http://localhost:8000" 
+
+volumes:
+  pgdata:
+    driver: local
+  tsdata:
+    driver: local
+  redisdata:
+    driver: local
