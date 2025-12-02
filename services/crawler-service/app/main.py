@@ -20,9 +20,23 @@ import redis
 from dateutil import parser as dateparser
 
 from app.modules.crawler import adaptive_crawl
-from app.kafka_producer import produce_news, close_producer
+from app.kafka_producer import produce_news, close_producer, create_startup_topics
 
 LOG = logging.getLogger("crawler.main")
+
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    )
+
+# ensure this module logger has a level and at least one handler
+LOG.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not LOG.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    LOG.addHandler(handler)
+LOG.propagate = True
 
 app = FastAPI(title="Crawler Service")
 
@@ -31,9 +45,9 @@ class CrawlRequest(BaseModel):
     url: str
 
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-SOURCES = os.getenv("CRAWL_SOURCES", "https://www.coindesk.com,https://vnexpress.net")
-CRAWL_INTERVAL = int(os.getenv("CRAWL_INTERVAL_SECONDS", str(15 * 60)))
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+SOURCES = os.getenv("CRAWL_SOURCES", "https://www.coindesk.com/arc/outboundfeeds/rss/,https://vnexpress.net")
+CRAWL_INTERVAL = int(os.getenv("CRAWL_INTERVAL_SECONDS", str(1 * 60)))
 REDIS_TTL = int(os.getenv("CRAWLER_REDIS_TTL", str(7 * 24 * 3600)))
 # politeness: minimal seconds between requests to the same host
 CRAWLER_PER_HOST_DELAY = float(os.getenv("CRAWLER_PER_HOST_DELAY", "2.0"))
@@ -74,6 +88,24 @@ def _get_source_from_url(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.netloc.lower().replace('www.', '')
     return host
+
+
+def _extract_symbol(text: str) -> str | None:
+    if not text:
+        return None
+    text_upper = text.upper()
+    # Simple mapping for demonstration; can be expanded or moved to config
+    if 'BITCOIN' in text_upper or 'BTC' in text_upper:
+        return 'BTCUSDT'
+    if 'ETHEREUM' in text_upper or 'ETH' in text_upper:
+        return 'ETHUSDT'
+    if 'DOGECOIN' in text_upper or 'DOGE' in text_upper:
+        return 'DOGEUSDT'
+    if 'SOLANA' in text_upper or 'SOL' in text_upper:
+        return 'SOLUSDT'
+    if 'BNB' in text_upper:
+        return 'BNBUSDT'
+    return None
 
 
 async def process_url_if_new(url: str):
@@ -120,17 +152,25 @@ async def process_url_if_new(url: str):
         except Exception:
             published_iso = None
 
+    # Extract symbol from title + content
+    full_text = (data.get('title') or '') + ' ' + (data.get('content') or '')
+    symbol = _extract_symbol(full_text)
+    
+    if not symbol and len(full_text) > 100:
+        LOG.info("No symbol found in article: %s (len=%d). Text snippet: %s", url, len(full_text), full_text[:100])
+
     payload = {
         'source': _get_source_from_url(url),
         'url': url,
         'title': data.get('title'),
         'content': data.get('content'),
         'published_at': published_iso,
+        'symbol': symbol,
     }
 
     try:
         produce_news(payload)
-        LOG.info("Published news: %s (title=%s)", url, payload.get('title'))
+        LOG.info("Published news: %s (title=%s, symbol=%s)", url, payload.get('title'), symbol)
     except Exception:
         LOG.exception("Failed publishing %s", url)
 
@@ -142,6 +182,7 @@ async def discover_and_queue_once():
     for s in sources:
         try:
             # check if host is temporarily blocked due to anti-bot/rate-limit
+            LOG.info("Starting discovery on source %s", s)
             host = urlparse(s).netloc
             now = time.monotonic()
             blocked_until = _host_block_until.get(host)
@@ -229,7 +270,8 @@ async def discover_and_queue_once():
 
             resp.raise_for_status()
             html = resp.text
-            soup = BeautifulSoup(html, 'html.parser')
+            parser = 'xml' if html.lstrip().startswith('<?xml') else 'html.parser'
+            soup = BeautifulSoup(html, parser)
             anchors = soup.find_all('a', href=True)
             seen = set()
             count = 0
@@ -294,6 +336,12 @@ _bg_task = None
 @app.on_event('startup')
 async def startup_event():
     LOG.info('Crawler starting up, connecting to Redis %s', REDIS_URL)
+    
+    # Ensure Kafka topics exist
+    try:
+        create_startup_topics()
+    except Exception as e:
+        LOG.warning("Failed to create startup topics: %s", e)
 
     loop = asyncio.get_event_loop()
 

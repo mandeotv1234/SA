@@ -2,6 +2,7 @@ import React from 'react';
 import Chart from './components/Chart';
 import useStore from './store';
 import Login from './components/Login.jsx';
+import InsightsPanel from './components/InsightsPanel';
 
 function App() {
   const { price, connectSocket, token, authFetch } = useStore();
@@ -38,6 +39,8 @@ function App() {
       </section>
 
       <Chart price={price} />
+
+      <InsightsPanel authFetch={authFetch} />
     </div>
   );
 }

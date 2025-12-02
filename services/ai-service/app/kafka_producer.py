@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from confluent_kafka import Producer
+from confluent_kafka.admin import AdminClient, NewTopic
 
 LOG = logging.getLogger("ai.kafka")
 
@@ -10,6 +11,24 @@ producer = Producer({"bootstrap.servers": KAFKA_BROKER})
 
 NEWS_ANALYZED_TOPIC = os.getenv("NEWS_ANALYZED_TOPIC", "news_analyzed")
 AI_INSIGHTS_TOPIC = os.getenv("AI_INSIGHTS_TOPIC", "ai_insights")
+
+def create_startup_topics():
+    """Explicitly create topics on startup to avoid consumer errors."""
+    admin_client = AdminClient({'bootstrap.servers': KAFKA_BROKER})
+    # Create topics with 1 partition and replication factor 1
+    new_topics = [
+        NewTopic(NEWS_ANALYZED_TOPIC, num_partitions=1, replication_factor=1),
+        NewTopic(AI_INSIGHTS_TOPIC, num_partitions=1, replication_factor=1)
+    ]
+    
+    fs = admin_client.create_topics(new_topics)
+
+    for topic, f in fs.items():
+        try:
+            f.result()
+            LOG.info("Topic {} created".format(topic))
+        except Exception as e:
+            LOG.info("Topic {} creation failed (might already exist): {}".format(topic, e))
 
 
 def _delivery(err, msg):

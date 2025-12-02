@@ -1,7 +1,7 @@
 const kafka = require('../config/kafka');
 const db = require('../config/db');
 
-const groupId = process.env.KAFKA_GROUP_ID || 'core-service-news-consumer';
+const groupId = process.env.NEWS_CONSUMER_GROUP_ID || process.env.KAFKA_GROUP_ID || 'core-service-news-consumer';
 const consumer = kafka.consumer({ groupId });
 
 const TOPIC = process.env.NEWS_ANALYZED_TOPIC || 'news_analyzed';
@@ -100,7 +100,9 @@ const run = async () => {
   await consumer.connect();
   console.log('Kafka Consumer connected, subscribing to', TOPIC);
 
-  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
+  // For a new consumer group in development we subscribe from beginning so historic
+  // analyzed messages are picked up; in production you may want fromBeginning:false.
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
 
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {

@@ -1,7 +1,7 @@
 const kafka = require('../config/kafka'); // should export a Kafka instance (from kafkajs)
 const db = require('../config/db');
 
-const groupId = process.env.KAFKA_GROUP_ID || 'core-service-market-consumer';
+const groupId = process.env.MARKET_CONSUMER_GROUP_ID || process.env.KAFKA_GROUP_ID || 'core-service-market-consumer';
 const consumer = kafka.consumer({ groupId });
 
 const TOPIC = process.env.MARKET_DATA_TOPIC || 'market_data'; // align with stream-service

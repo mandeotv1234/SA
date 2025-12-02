@@ -13,7 +13,7 @@ const kafka = new Kafka({
 
 // use legacy partitioner to silence v2 warning / keep previous partitioning behavior
 const producer = kafka.producer({
-  allowAutoTopicCreation: false,
+  allowAutoTopicCreation: true,
   idempotent: true,
   createPartitioner: Partitioners.LegacyPartitioner
 });

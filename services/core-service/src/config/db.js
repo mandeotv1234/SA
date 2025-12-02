@@ -61,6 +61,14 @@ const initDB = async () => {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_insights (
+        time TIMESTAMPTZ NOT NULL,
+        type TEXT,
+        payload JSONB
+      );
+    `);
+
     const checkExt = await client.query(`SELECT extname FROM pg_extension WHERE extname = 'timescaledb';`);
     if (checkExt.rowCount > 0) {
       try {
@@ -86,6 +94,19 @@ const initDB = async () => {
           } catch (hyErrNews) {
             console.warn('⚠️ create_hypertable for news_sentiment failed (continuing with standard table):', hyErrNews.message);
           }
+              try {
+                await client.query(`
+                  SELECT create_hypertable(
+                    'ai_insights',
+                    'time',
+                    if_not_exists => TRUE,
+                    migrate_data => TRUE
+                  );
+                `);
+                console.log("✅ ai_insights converted to hypertable (timescaledb).");
+              } catch (hyErrInsights) {
+                console.warn('⚠️ create_hypertable for ai_insights failed (continuing with standard table):', hyErrInsights.message);
+              }
       } catch (hyErr) {
         console.warn('⚠️ create_hypertable failed (continuing with standard table):', hyErr.message);
       }

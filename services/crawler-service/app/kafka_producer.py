@@ -2,10 +2,11 @@ import os
 import json
 import logging
 from confluent_kafka import Producer
+from confluent_kafka.admin import AdminClient, NewTopic
 
 LOG = logging.getLogger("crawler.kafka")
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKERS", "localhost:9092")
+KAFKA_BROKER = os.getenv("KAFKA_BROKERS", "kafka:9092")
 TOPIC = os.getenv("NEWS_RAW_TOPIC", "news_raw")
 
 # Allow passing additional producer config via env (comma-separated key=val)
@@ -22,6 +23,25 @@ if _extra:
             producer_config[k.strip()] = v.strip()
 
 producer = Producer(producer_config)
+
+def create_startup_topics():
+    """Explicitly create topics on startup to avoid consumer errors."""
+    admin_client = AdminClient({'bootstrap.servers': KAFKA_BROKER})
+    # Create news_raw topic with 1 partition and replication factor 1 (since we have 1 broker)
+    # You can adjust num_partitions and replication_factor as needed.
+    new_topics = [NewTopic(TOPIC, num_partitions=1, replication_factor=1)]
+    
+    # Call create_topics to asynchronously create topics.
+    fs = admin_client.create_topics(new_topics)
+
+    # Wait for each operation to finish.
+    for topic, f in fs.items():
+        try:
+            f.result()  # The result itself is None
+            LOG.info("Topic {} created".format(topic))
+        except Exception as e:
+            # If topic already exists, it will raise an error, which is fine.
+            LOG.info("Topic {} creation failed (might already exist): {}".format(topic, e))
 
 def _delivery(err, msg):
     if err:

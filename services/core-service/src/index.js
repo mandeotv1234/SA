@@ -3,8 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const marketRoutes = require('./routes/marketRoutes');
 const newsRoutes = require('./routes/newsRoutes');
+const insightRoutes = require('./routes/insightRoutes');
 const startMarketConsumer = require('./consumers/MarketDataConsumer');
 const startNewsConsumer = require('./consumers/NewsAnalyzedConsumer');
+const startAiInsightsConsumer = require('./consumers/AiInsightsConsumer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +18,7 @@ app.use(express.json());
 // Routes
 app.use('/api/v1', marketRoutes);
 app.use('/api/v1/news', newsRoutes);
+app.use('/api/v1/insights', insightRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
@@ -33,5 +36,9 @@ app.listen(PORT, () => {
   // start news analyzed consumer
   startNewsConsumer().catch(err => {
     console.error('Failed to start NewsAnalyzedConsumer', err);
+  });
+  // start ai insights consumer
+  startAiInsightsConsumer().catch(err => {
+    console.error('Failed to start AiInsightsConsumer', err);
   });
 });

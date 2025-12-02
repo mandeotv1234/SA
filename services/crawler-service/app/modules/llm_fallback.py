@@ -8,7 +8,7 @@ from dateutil import parser as dateparser
 LOG = logging.getLogger("crawler.llm")
 
 # Prefer new env var name; fall back to the old one if present for backwards compatibility
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBUdeL_0rSWO56BsgVuwzsongmvUslAeY8") or os.getenv("LLM_API_URL")
 
 PROMPT = (
     "You are an extractor that receives a full HTML document and must return a JSON object "

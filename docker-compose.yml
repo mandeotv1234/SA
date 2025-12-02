@@ -128,9 +128,14 @@ services:
       KAFKA_BROKERS: kafka:9092
       MARKET_DATA_TOPIC: market_data
       AI_INSIGHTS_TOPIC: ai_insights
+      # per-consumer group ids to avoid cross-subscription conflicts
+      MARKET_CONSUMER_GROUP_ID: core-service-market-consumer
+      NEWS_CONSUMER_GROUP_ID: core-service-news-consumer
     depends_on:
-      - timescaledb
-      - kafka
+      timescaledb:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     ports:
       - "3001:3000" # SỬA LỖI: Host 3001 -> Container 3000
     healthcheck:
@@ -145,7 +150,8 @@ services:
     environment:
       KAFKA_BROKERS: kafka:9092
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - "3002:3000" # SỬA LỖI: Host 3002 -> Container 3000
     healthcheck:
@@ -161,10 +167,15 @@ services:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379/0
       NEWS_RAW_TOPIC: news_raw
-      LLM_API_URL: ""
+      GEMINI_API_KEY: 
+      CRAWL_SOURCES: https://www.coindesk.com/arc/outboundfeeds/rss/,https://blogtienao.com/,https://coin68.com/,https://coinphoton.com/,https://vneconomy.vn/tag/bitcoin,https://thitruongtaichinhtiente.vn/bitcoin-ptag.html
+
+
     depends_on:
-      - kafka
-      - redis
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_started
     ports:
       - "8003:8001" # SỬA LỖI: Host 8003 -> Container 8001 (để tránh đụng Kong 8001)
     healthcheck:
@@ -180,16 +191,22 @@ services:
       KAFKA_BROKERS: kafka:9092
       NEWS_RAW_TOPIC: news_raw
       NEWS_ANALYZED_TOPIC: news_analyzed
+      KAFKA_GROUP: ai-service-group-v2
       AI_INSIGHTS_TOPIC: ai_insights
       FINBERT_MODEL: ProsusAI/finbert
-      CAUSAL_INTERVAL_MIN: 60
+      CAUSAL_INTERVAL_MIN: 1
+      GEMINI_API_KEY: 
+      GEMINI_MODEL: gemini-2.5-flash
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 6
+    ports:
+      - "8002:8002"
 
   web-frontend:
     build:
