@@ -34,10 +34,11 @@ async function initDB() {
     `);
     console.log("   → users table ensured (base)");
 
-    // Ensure columns exist
+    // Ensure columns exist (Add is_vip)
     const alterStmts = [
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS email text;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS password text;`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip boolean DEFAULT false;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();`
     ];
     for (const s of alterStmts) {

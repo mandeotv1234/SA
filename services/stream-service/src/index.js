@@ -1,5 +1,7 @@
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const { createClient } = require('redis');
 const BinanceClient = require('./binance-client');
 const { initProducer, sendPriceEvent, disconnectProducer } = require('./kafkaProducer');
 
@@ -7,10 +9,10 @@ const PORT = process.env.PORT || 3000;
 const SYMBOLS = (process.env.SYMBOLS || 'btcusdt,ethusdt').split(',').map(s => s.trim().toLowerCase());
 const INTERVAL = process.env.INTERVAL || '1m';
 const SEND_PARTIAL = (process.env.SEND_PARTIAL || 'false') === 'true';
+const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
 
-// Tối ưu HTTP Server
+// Optimized HTTP Server
 const httpServer = createServer((req, res) => {
-    // Health check đơn giản, không dùng overhead của framework
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{"alive": true}');
@@ -20,16 +22,29 @@ const httpServer = createServer((req, res) => {
     res.end();
 });
 
-const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET'] }, // Chỉ cần GET cho sub
-  path: '/socket.io',
-  // TỐI ƯU HIỆU NĂNG SOCKET:
-  transports: ['websocket'], // Bỏ polling, chỉ dùng websocket
-  perMessageDeflate: false,  // Tắt nén socket nếu CPU server yếu (tăng băng thông nhưng giảm CPU)
-  httpCompression: false,    // Tắt nén HTTP headers
-});
-
 async function start() {
+  // 1. Setup Redis Adapter for Horizontal Scaling
+  const pubClient = createClient({ url: REDIS_URL });
+  const subClient = pubClient.duplicate();
+
+  try {
+    await pubClient.connect();
+    await subClient.connect();
+    console.log('Redis connected for Socket.IO adapter');
+  } catch (err) {
+    console.error('Redis connection failed:', err);
+    process.exit(1);
+  }
+
+  const io = new Server(httpServer, {
+    cors: { origin: '*', methods: ['GET'] },
+    path: '/socket.io',
+    transports: ['websocket'],
+    perMessageDeflate: false,
+    httpCompression: false,
+    adapter: createAdapter(pubClient, subClient)
+  });
+
   try {
     await initProducer();
   } catch (e) {
@@ -38,40 +53,60 @@ async function start() {
 
   const client = new BinanceClient(SYMBOLS, INTERVAL);
   
-  // Xử lý sự kiện open để reconnect socket client nếu cần
   client.on('open', () => {
-    console.log("Binance Stream Started");
+    console.log("Binance Stream Started for symbols:", SYMBOLS);
   });
 
   client.on('kline', (msg) => {
-    // Logic filter
     if (!SEND_PARTIAL && !msg.kline.isFinal) return;
 
-    // 1. BROADCAST NGAY LẬP TỨC (Priority 1)
-    // Dùng volatile để nếu Client mạng lag thì bỏ qua gói tin cũ, không cố gửi lại gây lag thêm
-    io.volatile.emit('price_event', msg); 
+    // Use Room-based broadcasting: io.to(SYMBOL).emit(...)
+    // This ensures only clients interested in this symbol receive the packet.
+    // Significant bandwidth saving for 1000+ clients.
+    const symbolRoom = msg.symbol.toUpperCase();
+    
+    // volatile: if client is lagging, drop the packet (realtime data)
+    io.to(symbolRoom).volatile.emit('price_event', msg);
 
-    // 2. GỬI KAFKA ASYNC (Priority 2)
-    // Không dùng 'await' ở đây. Để nó chạy background.
+    // Also send to Kafka for persistence/analytics
     sendPriceEvent(msg); 
   });
 
   client.connect();
 
-  // Socket monitoring (Optional)
   io.on('connection', (socket) => {
-    // Log số lượng client để monitor
-     console.log(`Clients: ${io.engine.clientsCount}`);
+    // Optional monitoring log
+    const clientsCount = io.engine.clientsCount;
+    if (clientsCount % 100 === 0) {
+        console.log(`Monitor: ${clientsCount} clients connected`);
+    }
+
+    // Client subscribes to a specific symbol
+    socket.on('subscribe', (symbol) => {
+        if (symbol && typeof symbol === 'string') {
+            const room = symbol.toUpperCase();
+            socket.join(room);
+        }
+    });
+
+    // Client unsubscribes
+    socket.on('unsubscribe', (symbol) => {
+        if (symbol && typeof symbol === 'string') {
+            const room = symbol.toUpperCase();
+            socket.leave(room);
+        }
+    });
   });
 
   httpServer.listen(PORT, () => console.log(`Stream Service running on port ${PORT}`));
 
-  // Graceful shutdown
   const shutdown = async () => {
     console.log('Shutting down...');
     client.close();
-    io.close(); // Đóng socket server
+    io.close();
     await disconnectProducer();
+    await pubClient.disconnect();
+    await subClient.disconnect();
     process.exit(0);
   };
   

@@ -166,6 +166,10 @@ async def process_url_if_new(url: str):
         'content': data.get('content'),
         'published_at': published_iso,
         'symbol': symbol,
+        'sentiment': data.get('sentiment'),
+        'user_rating': data.get('user_rating'),
+        'category': data.get('category'),
+        'relevance_score': data.get('relevance_score')
     }
 
     try:
@@ -175,9 +179,41 @@ async def process_url_if_new(url: str):
         LOG.exception("Failed publishing %s", url)
 
 
+# DB Config
+DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
+DB_NAME = os.getenv("POSTGRES_DB", "appdb")
+DB_USER = os.getenv("POSTGRES_USER", "dev")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dev")
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+def get_active_sources():
+    """Fetch active crawl sources from Postgres."""
+    sources = []
+    # Default env sources as fallback
+    env_sources = [s.strip() for s in os.getenv("CRAWL_SOURCES", "").split(',') if s.strip()]
+    sources.extend(env_sources)
+
+    try:
+        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+        with conn.cursor() as cur:
+            cur.execute("SELECT url FROM crawl_sources WHERE is_active = TRUE")
+            rows = cur.fetchall()
+            for r in rows:
+                if r[0] not in sources:
+                    sources.append(r[0])
+        conn.close()
+    except Exception as e:
+        LOG.error(f"Failed to fetch sources from DB: {e}")
+    
+    return list(set(sources))
+
 async def discover_and_queue_once():
     """Discover candidate article URLs from configured sources and process them."""
-    sources = [s.strip() for s in SOURCES.split(',') if s.strip()]
+    sources = get_active_sources()
+    LOG.info(f"Active sources: {len(sources)}")
+    
     tasks = []
     for s in sources:
         try:
@@ -293,19 +329,43 @@ async def discover_and_queue_once():
                 seen.add(full)
                 # heuristics: avoid assets and short urls
                 path = parsed_src.path.lower()
-                if any(ext in path for ext in ['.jpg', '.png', '.mp4', '.pdf']):
+                if any(ext in path for ext in ['.jpg', '.png', '.mp4', '.pdf', '.css', '.js']):
                     continue
                 if len(path) < 3:
                     continue
+                
+                # EXCLUSION PATTERNS: Skip non-article pages
+                exclude_patterns = [
+                    '/tag/', '/category/', '/tags/', '/categories/',  # Category/tag pages
+                    '/app', '/download', '/vne-go', '/ung-dung',      # App download pages
+                    '/about', '/contact', '/lien-he', '/gioi-thieu',  # Static pages
+                    '/login', '/register', '/dang-nhap', '/dang-ky',  # Auth pages
+                    '/search', '/tim-kiem', '/rss', '/feed',          # Utility pages
+                    '/author/', '/tac-gia/', '/video/', '/podcast/',  # Media/author pages
+                    '/lich-van-nien', '/thoi-tiet', '/weather',       # Irrelevant tools
+                    '/quang-cao', '/advertising', '/subscribe',       # Ads/subscription
+                ]
+                if any(excl in path for excl in exclude_patterns):
+                    continue
+                
                 # for news-like links, many sites include year/month or /news/
-                if any(k in path for k in ['/news', '/article', '/tin-', '/202', '/20']):
+                # refined filtering for high-relevance financial news
+                relevant_keywords = [
+                    '/news/', '/article/', '/tin-tuc/', '/bai-viet/',
+                    '/2024/', '/2025/', '/2026/',  # Year patterns
+                    '/bitcoin', '/ethereum', '/crypto', '/btc', '/eth',
+                    '/market', '/finance', '/tai-chinh', '/kinh-te',
+                    '/policy', '/fed', '/rate', '/bank', '/ngan-hang',
+                    '/breaking/', '/analysis/', '/phan-tich/'
+                ]
+                if any(k in path for k in relevant_keywords):
                     tasks.append(full)
                     count += 1
-                elif count < 20:
-                    # allow some additional links up to 20
+                elif count < 10:  # Reduced from 20 to be more selective
+                    # allow some additional links up to 10
                     tasks.append(full)
                     count += 1
-                if count >= 200:
+                if count >= 100:  # Reduced from 200 for quality over quantity
                     break
         except Exception:
             LOG.exception("Failed discovery on %s", s)
@@ -321,7 +381,7 @@ async def discover_and_queue_once():
         unique.append(u)
 
     # process sequentially or with limited concurrency
-    sem = asyncio.Semaphore(10)
+    sem = asyncio.Semaphore(1)
 
     async def _proc(u):
         async with sem:

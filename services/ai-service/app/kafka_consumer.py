@@ -46,15 +46,22 @@ def start_consumer():
             except Exception as e:
                 print("Invalid json:", e); continue
             # If message already contains sentiment (i.e. is an analyzed message),
-            # use it directly. Otherwise compute sentiment and publish news_analyzed
-            # so other consumers can also benefit.
-            out = None
             if isinstance(j, dict) and (j.get('sentiment_label') is not None or j.get('sentiment_score') is not None):
                 out = j
             else:
                 # prepare short text for sentiment (title + first 2 paragraphs)
                 title = j.get("title") or ""
                 content = j.get("content", "") or ""
+
+                # Filter by relevance if available
+                relevance = float(j.get('relevance_score') or 0.5)
+                category = j.get('category')
+                
+                # Relaxed to 0.4 to allow heuristic (0.5) to pass if LLM extraction fails
+                if relevance < 0.4 and category not in ['Finance', 'Economy', 'Policy', 'Crypto', 'Market']:
+                    print(f"Skipping low relevance news: {title} (Rel={relevance}, Cat={category})")
+                    continue
+
                 paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
                 if not paragraphs:
                     paragraphs = [p.strip() for p in content.split('\n') if p.strip()]
@@ -64,19 +71,24 @@ def start_consumer():
                     if len(paragraphs) > 1:
                         short_text = f"{short_text}\n\n{paragraphs[1]}"
 
-                sentiment = analyze_sentiment_text(short_text)
-                label = None
-                score = None
-                try:
-                    if isinstance(sentiment, dict):
-                        label = max(sentiment.items(), key=lambda x: x[1])[0]
-                        score = float(sentiment.get(label, 0.0))
-                    else:
-                        label = str(sentiment)
-                        score = 0.0
-                except Exception:
-                    label = None
-                    score = None
+                # Use sentiment from Crawler if available (High Quality LLM)
+                crawler_sentiment = j.get("sentiment")
+                if crawler_sentiment:
+                    label = crawler_sentiment
+                    score = 0.9 if label.lower() == 'positive' else (-0.9 if label.lower() == 'negative' else 0.0)
+                else:
+                    # Fallback to local heuristic
+                    sentiment = analyze_sentiment_text(short_text)
+                    try:
+                        if isinstance(sentiment, dict):
+                            label = max(sentiment.items(), key=lambda x: x[1])[0]
+                            score = float(sentiment.get(label, 0.0))
+                        else:
+                            label = str(sentiment)
+                            score = 0.0
+                    except Exception:
+                        label = None
+                        score = None
 
                 out = {
                     "url": j.get("url"),
@@ -85,6 +97,7 @@ def start_consumer():
                     "published_at": j.get("published_at") or j.get("date") or None,
                     "sentiment_label": label,
                     "sentiment_score": score,
+                    "user_rating": j.get("user_rating"),
                     "raw": j
                 }
                 # produce analyzed for downstream consumers

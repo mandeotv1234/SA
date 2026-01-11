@@ -16,7 +16,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     ports:
       - "9092:9092"
-    healthcheck: # Thêm healthcheck để các service khác đợi Kafka
+    healthcheck:
       test: nc -z localhost 9092 || exit 1
       interval: 10s
       timeout: 5s
@@ -33,7 +33,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dev -d appdb"]
+      test: [ "CMD-SHELL", "pg_isready -U dev -d appdb" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -57,20 +57,17 @@ services:
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ---------------------------------------------------------
-  # KONG SECTION (Đã sửa logic init)
-  # ---------------------------------------------------------
   kong:
     image: kong/kong-gateway:3.6
     container_name: kong
     ports:
-      - "8000:8000" # Proxy
-      - "8001:8001" # Admin API
+      - "8000:8000"
+      - "8001:8001"
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: "/kong/kong.yml"
@@ -78,30 +75,25 @@ services:
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      # Thêm biến này để cho phép Socket.IO đi qua websocket
-      KONG_HEADERS: "off" 
+      KONG_HEADERS: "off"
     volumes:
       - ./infra/kong_conf/kong.yml:/kong/kong.yml:ro
     depends_on:
       kong-init:
-        condition: service_completed_successfully # QUAN TRỌNG: Đợi init chạy xong mới start
+        condition: service_completed_successfully
 
   kong-init:
     image: python:3.11-slim
-    # Cài thư viện request để gọi Auth Service
     command: >
       sh -c "pip install requests pyyaml && python /app/infra/generate_kong_yml.py"
     volumes:
       - .:/app:rw
     depends_on:
       auth-service:
-        condition: service_started # Đợi Auth service bật lên đã
+        condition: service_started
     networks:
       - default
 
-  # ---------------------------------------------------------
-  # APP SERVICES
-  # ---------------------------------------------------------
   auth-service:
     build:
       context: ./services/auth-service
@@ -111,11 +103,14 @@ services:
       POSTGRES_PASSWORD: dev
     depends_on:
       postgres:
-        condition: service_healthy # Đợi DB ready mới start app
+        condition: service_healthy
     ports:
-      - "8081:8080" # Host: 8081 -> Container: 8080
+      - "8081:8080"
+    volumes:
+      - ./services/auth-service:/app
+      - /app/node_modules
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/auth/public-key || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/auth/public-key || exit 1" ]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -128,7 +123,6 @@ services:
       KAFKA_BROKERS: kafka:9092
       MARKET_DATA_TOPIC: market_data
       AI_INSIGHTS_TOPIC: ai_insights
-      # per-consumer group ids to avoid cross-subscription conflicts
       MARKET_CONSUMER_GROUP_ID: core-service-market-consumer
       NEWS_CONSUMER_GROUP_ID: core-service-news-consumer
     depends_on:
@@ -137,9 +131,12 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "3001:3000" # SỬA LỖI: Host 3001 -> Container 3000
+      - "3001:3000"
+    volumes:
+      - ./services/core-service:/app
+      - /app/node_modules
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -149,13 +146,18 @@ services:
       context: ./services/stream-service
     environment:
       KAFKA_BROKERS: kafka:9092
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt"
+      SEND_PARTIAL: "true"
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "3002:3000" # SỬA LỖI: Host 3002 -> Container 3000
+      - "3002:3000"
+    volumes:
+      - ./services/stream-service:/app
+      - /app/node_modules
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -167,19 +169,21 @@ services:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379/0
       NEWS_RAW_TOPIC: news_raw
-      GEMINI_API_KEY: 
-      CRAWL_SOURCES: https://www.coindesk.com/arc/outboundfeeds/rss/,https://blogtienao.com/,https://coin68.com/,https://coinphoton.com/,https://vneconomy.vn/tag/bitcoin,https://thitruongtaichinhtiente.vn/bitcoin-ptag.html
-
-
+      OLLAMA_API_URL: "https://045f5fe73b9f.ngrok-free.app"
+      OLLAMA_MODEL: "llama3.2"
+      CRAWL_SOURCES: >-
+        https://cointelegraph.com/rss, https://cryptonews.com/news/feed/, https://decrypt.co/feed, https://bitcoinmagazine.com/.rss/full/, https://theblock.co/rss.xml, https://www.coindesk.com/arc/outboundfeeds/rss/, https://coin68.com/, https://blogtienao.com/, https://coinphoton.com/, https://tienthuattoan.com/, https://vietnambiz.vn/bitcoin.htm, https://cafef.vn/tai-chinh-ngan-hang.chn, https://vneconomy.vn/tag/bitcoin, https://thitruongtaichinhtiente.vn/bitcoin-ptag.html
     depends_on:
       kafka:
         condition: service_healthy
       redis:
         condition: service_started
     ports:
-      - "8003:8001" # SỬA LỖI: Host 8003 -> Container 8001 (để tránh đụng Kong 8001)
+      - "8003:8001"
+    volumes:
+      - ./services/crawler-service:/app
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -195,13 +199,15 @@ services:
       AI_INSIGHTS_TOPIC: ai_insights
       FINBERT_MODEL: ProsusAI/finbert
       CAUSAL_INTERVAL_MIN: 1
-      GEMINI_API_KEY: 
-      GEMINI_MODEL: gemini-2.5-flash
+      OLLAMA_API_URL: "https://045f5fe73b9f.ngrok-free.app"
+      OLLAMA_MODEL: "llama3.2"
     depends_on:
       kafka:
         condition: service_healthy
+    volumes:
+      - ./services/ai-service:/app
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8002/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -217,8 +223,10 @@ services:
       - core-service
       - stream-service
     environment:
-      # Frontend cần gọi vào Kong Gateway chứ không gọi trực tiếp service
-      VITE_API_URL: "http://localhost:8000" 
+      VITE_API_URL: "http://localhost:8000"
+    volumes:
+      - ./web-frontend:/app
+      - /app/node_modules
 
 volumes:
   pgdata:

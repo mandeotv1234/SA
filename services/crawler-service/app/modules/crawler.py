@@ -48,21 +48,10 @@ def adaptive_crawl(url: str, session: requests.sessions.Session | None = None) -
         r = client.get(url, timeout=15, headers={"User-Agent": "crawler-service/1.0"})
         r.raise_for_status()
         html = r.text
+        
+        # Always use LLM extraction to ensure we get Category, Relevance, Sentiment, etc.
+        # The extract_with_llm function handles its own fallback to heuristics if needed.
+        return extract_with_llm(html, url)
+        
     except Exception as e:
         return {"error": "fetch_failed", "detail": str(e), "url": url}
-    extracted = _simple_meta_extract(html)
-    if extracted.get("content"):
-        return {"url": url, **extracted}
-    # fallback to LLM extractor
-    llm_res = extract_with_llm(html)
-    if llm_res and llm_res.get("content"):
-        # try normalize llm date
-        d = llm_res.get('date')
-        published_iso = None
-        if d:
-            try:
-                published_iso = dateparser.parse(d).isoformat()
-            except Exception:
-                published_iso = None
-        return {"url": url, "title": llm_res.get('title'), "date": published_iso, "content": llm_res.get('content')}
-    return {"url": url, **extracted}

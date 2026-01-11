@@ -184,18 +184,22 @@ def analyze_event_causal(news_payload: dict):
         pre_vals = [p[1] for p in points[pre_start:pre_end]]
         post_vals = [p[1] for p in points[post_start:post_end]]
 
-        # PREDICTION MODE: If we have pre-data but no post-data (fresh news), we predict.
-        is_prediction = False
+        # PREDICTION MODE:
+        # If the news is relatively recent (e.g. within last 24 hours = 1440 mins),
+        # we treat it as a prediction event. The user wants to see "Dự đoán" for valid news.
+        # We will provide the existing post-data to the AI so it can comment on the initial reaction.
+        is_prediction = len(post_vals) < 1440
+        
         if pre_vals and not post_vals:
-            is_prediction = True
+            # No post data at all (brand new)
             pre_avg = sum(pre_vals) / len(pre_vals)
-            post_avg = pre_avg # Placeholder, will be updated by AI prediction
+            post_avg = pre_avg 
             ret = 0.0
         elif not pre_vals:
              # not enough resolution around event
             return {"timestamp": int(datetime.now(timezone.utc).timestamp()), "status": "insufficient_data", "url": news_payload.get('url'), "used_candles": {"pre": len(pre_vals), "post": len(post_vals)}}
         else:
-            # We have both pre and post, so it's a historical analysis
+            # We have both pre and post
             pre_avg = sum(pre_vals) / len(pre_vals)
             post_avg = sum(post_vals) / len(post_vals)
             ret = (post_avg - pre_avg) / pre_avg if pre_avg != 0 else 0.0
@@ -219,121 +223,108 @@ def analyze_event_causal(news_payload: dict):
             "is_prediction": is_prediction
         }
 
-        # optionally generate a short natural-language rationale via Gemini
+        # optionally generate a short natural-language rationale via Ollama (Llama 3.2 via Ngrok)
         rationale = None
+        prediction_direction = None
+        predicted_change_pct = None
         try:
-            enable_gemini = str(os.getenv('ENABLE_GEMINI', 'true')).lower() in ('1', 'true', 'yes')
-            gemini_key = os.getenv('GEMINI_API_KEY') or os.getenv('GEMINI_KEY')
-            if enable_gemini:
-                if not gemini_key:
-                    print("ENABLE_GEMINI is true but GEMINI_API_KEY is not set; skipping rationale")
-                elif not HAS_GENAI:
-                    print("google-generativeai package not available; skipping Gemini rationale")
-                else:
-                    try:
-                        genai.configure(api_key=gemini_key)
-                        
-                        if is_prediction:
-                            prompt = (
-                                "Bạn là một chuyên gia phân tích tài chính AI. Nhiệm vụ của bạn là DỰ ĐOÁN xu hướng giá dựa trên tin tức mới nhất.\n"
-                                "Dữ liệu đầu vào:\n"
-                                f"- Tiêu đề tin tức: {news_payload.get('title') or ''}\n"
-                                f"- URL: {news_payload.get('url') or ''}\n"
-                                f"- Cặp tiền: {sym}\n"
-                                f"- Giá trung bình {pre_mins} phút trước tin: {pre_avg:.2f}\n"
-                                "\n"
-                                "Yêu cầu:\n"
-                                "1. Phân tích tác động của tin tức này đối với giá (Tích cực/Tiêu cực/Trung lập).\n"
-                                "2. Dự đoán xu hướng giá trong 1 giờ tới (TĂNG hay GIẢM).\n"
-                                "3. Đưa ra lý do ngắn gọn (dưới 3 câu).\n"
-                                "4. Quan trọng: Hãy bắt đầu câu trả lời bằng 'DỰ ĐOÁN: TĂNG' hoặc 'DỰ ĐOÁN: GIẢM' hoặc 'DỰ ĐOÁN: KHÔNG ĐỔI', sau đó là lý do."
-                            )
+            if is_prediction:
+                prompt = (
+                    "Bạn là một chuyên gia phân tích tài chính AI. Nhiệm vụ của bạn là DỰ ĐOÁN xu hướng giá trong 24 giờ tới.\n\n"
+                    "Dữ liệu đầu vào:\n"
+                    f"- Tin tức: {news_payload.get('title') or ''}\n"
+                    f"- URL: {news_payload.get('url')}\n"
+                    f"- Cặp tiền: {sym}\n"
+                    f"- Giá hiện tại: {pre_avg:.2f} USD\n"
+                    f"- Phản ứng ban đầu ({len(post_vals)} phút): {ret*100:.4f}%\n"
+                    f"- Cảm xúc tin tức: {news_payload.get('sentiment_label') or 'Neutral'}\n\n"
+                    "YÊU CẦU: Trả về JSON với định dạng CHÍNH XÁC sau:\n"
+                    "```json\n"
+                    "{\n"
+                    '  "direction": "UP" hoặc "DOWN" hoặc "NEUTRAL",\n'
+                    '  "predicted_change_pct": số phần trăm dự đoán (ví dụ: 2.5 cho tăng 2.5%, -1.5 cho giảm 1.5%),\n'
+                    '  "rationale": "Giải thích ngắn gọn nguyên nhân và hậu quả (tiếng Việt, 1-2 câu)"\n'
+                    "}\n"
+                    "```\n\n"
+                    "CHỈ TRẢ VỀ JSON, KHÔNG CÓ TEXT KHÁC."
+                )
+            else:
+                prompt = (
+                    "Bạn là một chuyên gia phân tích tài chính. Dựa trên dữ liệu lịch sử sau, hãy giải thích biến động giá:\n"
+                    f"Tiêu đề: {news_payload.get('title') or ''}\n"
+                    f"URL: {news_payload.get('url') or ''}\n"
+                    f"Symbol: {sym}\n"
+                    f"Pre average: {pre_avg:.6f}, Post average: {post_avg:.6f}, Return: {ret:.6f}\n"
+                    "Trả về JSON: {\"direction\": \"UP/DOWN/NEUTRAL\", \"actual_change_pct\": X, \"rationale\": \"...\"}"
+                )
+
+            ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+            model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            api_endpoint = f"{ollama_url}/api/generate"
+            
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            }
+            
+            # Log attempt (helpful for debugging)
+            print(f"Calling Ollama at {api_endpoint} with model {model}...")
+            
+            start_t = time.time()
+            response = requests.post(api_endpoint, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                data = response.json()
+                raw_response = data.get("response", "")
+                print(f"Ollama generation succeeded in {time.time()-start_t:.2f}s")
+                
+                # Parse JSON response
+                try:
+                    import json as json_lib
+                    parsed = json_lib.loads(raw_response)
+                    prediction_direction = parsed.get("direction", "NEUTRAL").upper()
+                    predicted_change_pct = float(parsed.get("predicted_change_pct", 0) or 0)
+                    rationale = parsed.get("rationale", "")
+                    
+                    # Normalize direction
+                    if prediction_direction not in ["UP", "DOWN", "NEUTRAL"]:
+                        if "tăng" in prediction_direction.lower():
+                            prediction_direction = "UP"
+                        elif "giảm" in prediction_direction.lower():
+                            prediction_direction = "DOWN"
                         else:
-                            prompt = (
-                                "Bạn là một chuyên gia phân tích tài chính. Dựa trên dữ liệu lịch sử sau, hãy giải thích biến động giá:\n"
-                                f"Tiêu đề: {news_payload.get('title') or ''}\n"
-                                f"URL: {news_payload.get('url') or ''}\n"
-                                f"Symbol: {sym}\n"
-                                f"Pre average: {pre_avg:.6f}, Post average: {post_avg:.6f}, Return: {ret:.6f}\n"
-                                "Tóm tắt các yếu tố có ảnh hưởng và giải thích tại sao giá lại biến động như vậy (ngắn gọn)."
-                            )
+                            prediction_direction = "NEUTRAL"
+                    
+                    # Set return_pct based on predicted direction for UI color
+                    if prediction_direction == "UP":
+                        insight['return_pct'] = abs(predicted_change_pct) / 100.0
+                    elif prediction_direction == "DOWN":
+                        insight['return_pct'] = -abs(predicted_change_pct) / 100.0
+                    else:
+                        insight['return_pct'] = 0.0
+                        
+                except Exception as parse_err:
+                    print(f"Failed to parse Ollama JSON response: {parse_err}")
+                    rationale = raw_response  # Use raw text as fallback
+                    
+            else:
+                print(f"Ollama failed with status {response.status_code}: {response.text}")
+                rationale = None
 
-                        # call gemini and extract text robustly
-                        try:
-                            # Use the GenerativeModel + ChatSession pattern to generate text.
-                            model_candidates = [os.getenv('GEMINI_MODEL'), 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5', 'models/text-bison-001', 'text-bison-001']
-                            model_candidates = [m for m in model_candidates if m]
-                            resp = None
-                            for model_name in model_candidates:
-                                try:
-                                    gm = genai.GenerativeModel(model_name=model_name)
-                                    session = genai.ChatSession(gm)
-                                except Exception as e:
-                                    print(f"Failed to create GenerativeModel/ChatSession for '{model_name}': {e}")
-                                    continue
-                                try:
-                                    resp = session.send_message(prompt)
-                                    print(f"Gemini generation succeeded with model {model_name}")
-                                except Exception as e:
-                                    print(f"Model {model_name} send_message failed: {e}")
-                                    resp = None
-                                if resp is not None:
-                                    break
-                            if resp is None:
-                                print('No working Gemini model/endpoint available; skipping rationale')
-                        except Exception as e:
-                            print(f"Gemini rationale generation error: {e}")
-                            resp = None
-
-                        if resp is not None:
-                            text = None
-                            try:
-                                text = getattr(resp, 'text', None)
-                            except Exception:
-                                text = None
-                            if not text:
-                                try:
-                                    text = resp['candidates'][0]['content'][0]['text']
-                                except Exception:
-                                    pass
-                            if not text:
-                                try:
-                                    text = resp.get('output') if isinstance(resp, dict) else None
-                                except Exception:
-                                    pass
-                            if not text:
-                                try:
-                                    # chat-like
-                                    text = resp['choices'][0]['message']['content']
-                                except Exception:
-                                    pass
-                            if not text:
-                                try:
-                                    text = str(resp)
-                                except Exception:
-                                    text = None
-                            rationale = text
-                            
-                            # If prediction mode, parse the rationale to update return_pct for UI visualization
-                            if is_prediction and rationale:
-                                lower_rat = rationale.lower()
-                                if "dự đoán: tăng" in lower_rat or "xu hướng: tăng" in lower_rat:
-                                    insight['return_pct'] = 0.01 # Fake positive return for UI green color
-                                elif "dự đoán: giảm" in lower_rat or "xu hướng: giảm" in lower_rat:
-                                    insight['return_pct'] = -0.01 # Fake negative return for UI red color
-                                else:
-                                    insight['return_pct'] = 0.0
-
-                    except Exception as e:
-                        print(f"Gemini rationale generation error: {e}")
-                        rationale = None
-        except Exception:
+        except Exception as e:
+            print(f"Ollama prediction error: {e}")
             rationale = None
 
         # attach rationale and produce insight message
         full_msg = {"type": "causal_event", "insight": insight}
         if rationale:
             full_msg['insight']['rationale'] = rationale
+        if prediction_direction:
+            full_msg['insight']['prediction_direction'] = prediction_direction
+        if predicted_change_pct is not None:
+            full_msg['insight']['predicted_change_pct'] = predicted_change_pct
         # produce insight to Kafka (best-effort)
         try:
             produce_ai_insight(full_msg)

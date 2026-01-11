@@ -16,9 +16,10 @@ app.use(cors()); // Cho phép Frontend React gọi API
 app.use(express.json());
 
 // Routes
-app.use('/api/v1', marketRoutes);
-app.use('/api/v1/news', newsRoutes);
-app.use('/api/v1/insights', insightRoutes);
+// Kong strips '/api', so we receive '/v1' requests. match that.
+app.use('/v1', marketRoutes);          // /v1/klines
+app.use('/v1/news', newsRoutes);       // /v1/news
+app.use('/v1/insights', insightRoutes);// /v1/insights
 
 // Health Check
 app.get('/health', (req, res) => {
@@ -28,7 +29,7 @@ app.get('/health', (req, res) => {
 // Start Server
 app.listen(PORT, () => {
   console.log(`Core Service running on port ${PORT}`);
-  
+
   // Sau khi server web chạy, khởi động luôn Kafka Consumer
   startMarketConsumer().catch(err => {
     console.error('Failed to start Kafka Consumer', err);

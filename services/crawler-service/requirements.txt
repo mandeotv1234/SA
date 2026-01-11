@@ -8,6 +8,5 @@ beautifulsoup4
 redis
 python-dateutil
 lxml
-
-# Google Gemini SDK
 google-generativeai
+psycopg2-binary

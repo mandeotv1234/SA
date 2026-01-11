@@ -1,46 +1,37 @@
-import React from 'react';
-import Chart from './components/Chart';
+import React, { useEffect } from 'react';
 import useStore from './store';
 import Login from './components/Login.jsx';
-import InsightsPanel from './components/InsightsPanel';
+import Chart from './components/Chart';
+import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
+import LeftToolbar from './components/LeftToolbar';
+import './index.css';
 
 function App() {
-  const { price, connectSocket, token, authFetch } = useStore();
+  const { token, connectSocket } = useStore();
 
-  React.useEffect(() => { connectSocket(); }, [connectSocket]);
+  useEffect(() => {
+    if (token) connectSocket();
+  }, [token, connectSocket]);
 
-  // Debug: try fetch history once and show result count
-  const [historyCount, setHistoryCount] = React.useState(null);
-  React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const res = await authFetch('/v1/klines?symbol=BTCUSDT&limit=1000');
-        if (!res.ok) throw new Error('history fetch failed ' + res.status);
-        const data = await res.json();
-        if (mounted) setHistoryCount(Array.isArray(data) ? data.length : -1);
-      } catch (e) {
-        if (mounted) setHistoryCount(-1);
-        console.error('history fetch err', e);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [authFetch]);
-
-  // if not authenticated show login page
   if (!token) return <Login />;
 
   return (
-    <div style={{ padding: 12 }}>
-      <h1>Crypto Dashboard</h1>
+    <div className="app-container">
+      <Navbar />
 
-      <section style={{ marginBottom: 12 }}>
-        <div>Last price event: {price ? JSON.stringify(price) : 'none'}</div>
-      </section>
+      <div className="main-content">
+        {/* Left Toolbar */}
+        <LeftToolbar />
 
-      <Chart price={price} />
+        {/* Main Chart Area */}
+        <div className="chart-area">
+          <Chart />
+        </div>
 
-      <InsightsPanel authFetch={authFetch} />
+        {/* Right Sidebar */}
+        <Sidebar />
+      </div>
     </div>
   );
 }

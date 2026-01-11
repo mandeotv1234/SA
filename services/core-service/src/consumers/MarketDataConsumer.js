@@ -18,21 +18,31 @@ const flushBufferToDB = async () => {
   // take snapshot of buffer and reset immediately to accept new messages
   const currentBatch = messageBuffer.splice(0, messageBuffer.length);
 
+  // Deduplicate batch: keep only the latest update for each (symbol, time) pair
+  const uniqueMap = new Map();
+  for (const kline of currentBatch) {
+    // time: use openTime logic consistent with extractKline
+    const timeMs = kline.openTime || kline.t || kline.openTime === 0 ? kline.openTime : kline.closeTime;
+    const key = `${String(kline.symbol).toUpperCase()}-${timeMs}`;
+    uniqueMap.set(key, { ...kline, timeMs });
+    // .set() overwrites previous value, ensuring we keep the LATEST update for this candle
+  }
+
+  const uniqueBatch = Array.from(uniqueMap.values());
+
   const client = await db.pool.connect();
   try {
     const values = [];
-    const placeholders = currentBatch.map((kline, index) => {
+    const placeholders = uniqueBatch.map((kline, index) => {
       const i = index * 7;
-      // time: use closeTime if available (represents candle end), otherwise openTime
-      const timeMs = (kline.closeTime || kline.C || kline.closeTime === 0) ? kline.closeTime : kline.openTime;
-      values.push(new Date(Number(timeMs))); // time
-      values.push(String(kline.symbol || kline.s).toUpperCase()); // symbol
+      values.push(new Date(Number(kline.timeMs))); // time
+      values.push(String(kline.symbol).toUpperCase()); // symbol
       values.push(parseFloat(kline.open)); // open
       values.push(parseFloat(kline.high)); // high
       values.push(parseFloat(kline.low)); // low
       values.push(parseFloat(kline.close)); // close
       values.push(parseFloat(kline.volume)); // volume
-      return `($${i+1}, $${i+2}, $${i+3}, $${i+4}, $${i+5}, $${i+6}, $${i+7})`;
+      return `($${i + 1}, $${i + 2}, $${i + 3}, $${i + 4}, $${i + 5}, $${i + 6}, $${i + 7})`;
     }).join(',');
 
     const queryText = `
@@ -46,7 +56,7 @@ const flushBufferToDB = async () => {
     `;
 
     await client.query(queryText, values);
-    console.log(`Saved ${currentBatch.length} klines to DB`);
+    console.log(`Saved ${uniqueBatch.length} klines to DB (deduplicated from ${currentBatch.length})`);
   } catch (err) {
     console.error('Error batch inserting klines:', err);
     // in case of failure, re-insert currentBatch back to messageBuffer head for retry

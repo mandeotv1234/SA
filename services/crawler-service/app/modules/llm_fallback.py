@@ -1,125 +1,135 @@
 import os
 import json
 import logging
+import requests
 from typing import Dict
-from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
 LOG = logging.getLogger("crawler.llm")
 
-# Prefer new env var name; fall back to the old one if present for backwards compatibility
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_URL")
-
-PROMPT = (
-    "You are an extractor that receives a full HTML document and must return a JSON object "
-    "with keys: title, date (ISO 8601 or empty), and content (clean text). Return ONLY valid JSON.\n\n"
-    "HTML:\n"
-)
-
-
 def _heuristic_extract(html: str) -> Dict:
+    """Fallback if LLM fails."""
+    from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.string.strip() if soup.title and soup.title.string else None
     paragraphs = [p.get_text().strip() for p in soup.find_all("p")]
     content = "\n\n".join(paragraphs)[:20000]
-    return {"title": title, "date": None, "content": content}
+    return {
+        "title": title, 
+        "date": None, 
+        "content": content,
+        "category": "General",
+        "relevance_score": 0.5,
+        "sentiment": "Neutral",
+        "user_rating": None
+    }
 
-
-def extract_with_llm(html: str) -> Dict:
-    """Use Google Gemini via google-generativeai SDK in JSON mode to extract structured fields.
-
-    If the SDK isn't available or the API key is not set, fall back to simple heuristics.
+def extract_with_llm(html_content: str, url: str) -> Dict:
     """
-    if GEMINI_API_KEY:
+    Uses a self-hosted LLM (Llama 3.2 via Ollama/Ngrok) to parse raw HTML 
+    and extract structured JSON data.
+    """
+    
+    # Clean up HTML slightly to reduce token count
+    cleaned_html = html_content.strip() if html_content else ""
+    if len(cleaned_html) > 15000:
+        cleaned_html = cleaned_html[:15000] + "..."
+
+    prompt = (
+        "Bạn là chuyên gia trích xuất tin tức tài chính. Phân tích HTML và trả về JSON.\n\n"
+        "QUY TẮC QUAN TRỌNG:\n"
+        "1. CHỈ XỬ LÝ bài viết tin tức thực sự về tài chính, crypto, kinh tế.\n"
+        "2. NẾU đây KHÔNG phải bài viết tin tức (trang chủ, trang danh mục, trang ứng dụng, trang liên hệ...), "
+        "trả về: {\"is_article\": false, \"reject_reason\": \"lý do\"}\n"
+        "3. NẾU là bài viết tin tức tài chính hợp lệ, trả về JSON với các key sau:\n\n"
+        "{\n"
+        "  \"is_article\": true,\n"
+        "  \"title\": \"Tiêu đề bài viết\",\n"
+        "  \"date\": \"YYYY-MM-DDTHH:MM:SSZ hoặc null\",\n"
+        "  \"content\": \"Tóm tắt nội dung tin tức (100-300 từ), tập trung vào sự kiện chính và tác động thị trường\",\n"
+        "  \"category\": \"Finance\" | \"Crypto\" | \"Economy\" | \"Policy\" | \"Market\",\n"
+        "  \"relevance_score\": 0.0-1.0 (mức độ liên quan đến thị trường crypto/tài chính),\n"
+        "  \"sentiment\": \"Positive\" | \"Negative\" | \"Neutral\",\n"
+        "  \"key_points\": [\"điểm chính 1\", \"điểm chính 2\"],\n"
+        "  \"affected_assets\": [\"BTC\", \"ETH\", ...] (các tài sản bị ảnh hưởng)\n"
+        "}\n\n"
+        "HTML Content:\n"
+        f"{cleaned_html}\n\n"
+        "CHỈ TRẢ VỀ JSON, KHÔNG CÓ TEXT KHÁC."
+    )
+
+    ollama_url = os.getenv("OLLAMA_API_URL")
+    if not ollama_url:
+        LOG.error("OLLAMA_API_URL is not set.")
+        return _heuristic_extract(html_content)
+        
+    model = os.getenv("OLLAMA_MODEL", "llama3.2")
+    api_endpoint = f"{ollama_url}/api/generate"
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json"
+    }
+
+    try:
+        LOG.info(f"Sending HTML (len={len(cleaned_html)}) to Ollama at {ollama_url}...")
+        resp = requests.post(api_endpoint, json=payload, timeout=60)
+        resp.raise_for_status()
+        
+        data = resp.json()
+        raw_response = data.get("response", "")
+        
+        # Parse JSON from the response text
+        j = None
         try:
-            try:
-                import google.generativeai as genai
-            except Exception:
-                genai = None
-            if genai:
-                # configure client
+            j = json.loads(raw_response)
+        except json.JSONDecodeError:
+            # Fallback: try to find JSON block if Llama adds extra text
+            start = raw_response.find('{')
+            end = raw_response.rfind('}') + 1
+            if start != -1 and end != -1:
                 try:
-                    genai.configure(api_key=GEMINI_API_KEY)
-                except Exception:
-                    # some SDK versions use different configuration entrypoints
-                    try:
-                        genai.Client(api_key=GEMINI_API_KEY)
-                    except Exception:
-                        pass
+                    j = json.loads(raw_response[start:end])
+                except:
+                    pass
+        
+        if not j:
+            LOG.error(f"Failed to parse JSON from Ollama response: {raw_response[:200]}...")
+            return _heuristic_extract(html_content)
 
-                prompt = PROMPT + html
+        # Check if LLM rejected this as non-article
+        if j.get("is_article") == False:
+            reject_reason = j.get("reject_reason", "Not a news article")
+            LOG.info(f"LLM rejected {url}: {reject_reason}")
+            return {"error": "not_article", "reason": reject_reason, "url": url}
 
-                # Request JSON Mode so model returns strict JSON
-                # We attempt to call `generate` which may exist across SDK versions; be defensive.
-                resp = None
-                try:
-                    resp = genai.generate(
-                        model="gemini-1.5-flash",
-                        prompt=prompt,
-                        max_output_tokens=1024,
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    )
-                except Exception:
-                    try:
-                        # some SDKs expose chat.create-style API
-                        resp = genai.chat.create(
-                            model="gemini-1.5-flash",
-                            messages=[{"role": "user", "content": prompt}],
-                            response_mime_type="application/json",
-                        )
-                    except Exception:
-                        resp = None
+        # Post-process date
+        published_iso = j.get("date")
+        if published_iso:
+             try:
+                published_iso = dateparser.parse(published_iso).isoformat()
+             except:
+                published_iso = None
+        
+        # Extract relevance score, default to 0.7 for valid articles
+        relevance = j.get("relevance_score")
+        if relevance is None or not isinstance(relevance, (int, float)):
+            relevance = 0.7  # Default high relevance for LLM-approved articles
+        
+        return {
+            "title": j.get("title"), 
+            "date": published_iso, 
+            "content": j.get("content"),
+            "category": j.get("category") or "Crypto",
+            "relevance_score": relevance,
+            "sentiment": j.get("sentiment") or "Neutral",
+            "key_points": j.get("key_points"),
+            "affected_assets": j.get("affected_assets"),
+            "user_rating": j.get("user_rating")
+        }
 
-                if resp is not None:
-                    # Try several common shapes to extract the returned JSON string
-                    text = None
-                    try:
-                        # SDKs sometimes return a simple string attribute
-                        text = getattr(resp, "text", None) or getattr(resp, "content", None)
-                    except Exception:
-                        text = None
-
-                    if not text:
-                        # dict-like shapes
-                        try:
-                            # resp may be dict-like with keys 'output' or 'candidates'
-                            if isinstance(resp, dict):
-                                if "output" in resp and isinstance(resp["output"], list) and len(resp["output"]) > 0:
-                                    o = resp["output"][0]
-                                    # gemini SDK may nest content candidates
-                                    if isinstance(o, dict) and "content" in o:
-                                        c = o["content"]
-                                        if isinstance(c, list) and len(c) > 0 and isinstance(c[0], dict) and "text" in c[0]:
-                                            text = c[0]["text"]
-                                if not text and "candidates" in resp and isinstance(resp["candidates"], list):
-                                    cand = resp["candidates"][0]
-                                    if isinstance(cand, dict) and "content" in cand and isinstance(cand["content"], str):
-                                        text = cand["content"]
-                        except Exception:
-                            text = None
-
-                    if not text:
-                        try:
-                            text = json.dumps(resp)
-                        except Exception:
-                            text = str(resp)
-
-                    # parse as JSON
-                    try:
-                        j = json.loads(text)
-                        d = j
-                        published_iso = None
-                        if d and d.get("date"):
-                            try:
-                                published_iso = dateparser.parse(d.get("date")).isoformat()
-                            except Exception:
-                                published_iso = None
-                        return {"title": d.get("title"), "date": published_iso, "content": d.get("content")}
-                    except Exception:
-                        LOG.exception("Failed to parse JSON from Gemini response; falling back to heuristics")
-        except Exception:
-            LOG.exception("Gemini extraction failed, falling back to heuristic extractor")
-
-    # fallback heuristic extraction
-    return _heuristic_extract(html)
+    except Exception as e:
+        LOG.error(f"Ollama extraction failed for {url}: {e}")
+        return _heuristic_extract(html_content)

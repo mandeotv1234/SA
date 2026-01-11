@@ -1,122 +1,147 @@
-// ...existing code...
-import React from 'react';
+import { create } from 'zustand';
 import { io } from 'socket.io-client';
 
-let socket = null;
+const getGatewayUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const u = new URL(import.meta.env.VITE_API_URL);
+      return u.origin;
+    } catch (e) { }
+  }
+  return 'http://localhost:8000';
+};
+
+const GATEWAY = getGatewayUrl();
+const API_BASE = `${GATEWAY}/api`;
+const AUTH_BASE = `${GATEWAY}/auth`;
+const WS_BASE = import.meta.env.VITE_WS_URL || GATEWAY;
 
 function normalizeIncoming(msg) {
-  // normalize different incoming shapes to { t, o, h, l, c } where t is seconds
   try {
-    // normalized: { symbol, interval, kline: { openTime(ms), closeTime(ms), open, high, low, close } }
     if (msg && msg.kline) {
       const k = msg.kline;
-      const timeSec = Math.floor((k.closeTime || k.openTime) / 1000);
-      return { t: timeSec, o: Number(k.open), h: Number(k.high), l: Number(k.low), c: Number(k.close) };
+      // Use openTime (Start of Candle) to align with Historical Data and prevent "thin" separated candles
+      const timeSec = Math.floor((k.openTime || k.t) / 1000);
+      const close = Number(k.close);
+      const open = Number(k.open);
+      const volume = Number(k.volume || k.v);
+      return {
+        t: timeSec,
+        o: open,
+        h: Number(k.high),
+        l: Number(k.low),
+        c: close,
+        value: volume,
+        color: close >= open ? '#089981' : '#f23645'
+      };
     }
-    // Binance raw: { data: { k: { t, T, o, h, l, c } } }
-    if (msg && msg.data && msg.data.k) {
-      const k = msg.data.k;
-      const timeSec = Math.floor((k.T || k.t) / 1000);
-      return { t: timeSec, o: Number(k.o), h: Number(k.h), l: Number(k.l), c: Number(k.c) };
-    }
-    // lightweight shape: { t (sec), o, h, l, c }
-    if (msg && msg.t && msg.o !== undefined) {
-      return { t: Number(msg.t), o: Number(msg.o), h: Number(msg.h), l: Number(msg.l), c: Number(msg.c) };
-    }
-  } catch (e) { /* ignore parse errors */ }
+  } catch (e) { /* ignore */ }
   return null;
 }
 
-export default function useStore() {
-  const [token, setToken] = React.useState(() => {
-    try { return localStorage.getItem('token'); } catch (e) { return null; }
-  });
-  const [price, setPrice] = React.useState(null);
+const useStore = create((set, get) => ({
+  token: localStorage.getItem('token') || null,
+  isVip: localStorage.getItem('isVip') === 'true',
+  currentSymbol: 'BTCUSDT',
+  price: null,
+  socket: null,
+  marketState: {},
+  supportedSymbols: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'XRPUSDT'],
 
-  const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
-  const LOGIN_URL = import.meta.env.VITE_LOGIN_URL || `${API_BASE.replace(/\/api\/?$/, '')}/auth/login`;
-  // WS base: use VITE_WS_URL or base host of API (strip /api)
-  const WS_BASE = (import.meta.env.VITE_WS_URL || API_BASE.replace(/\/api\/?$/, '')).replace(/\/$/, '');
+  setSymbol: (symbol) => {
+    set({ currentSymbol: symbol, price: null });
+  },
 
-  const login = React.useCallback(async (email, password) => {
-    const url = `${LOGIN_URL}`;
-    const res = await fetch(url, {
+  connectSocket: () => {
+    const { token, socket, supportedSymbols } = get();
+    if (socket && socket.connected) return;
+
+    let url = WS_BASE;
+    if (!/^https?:\/\//.test(url)) url = window.location.origin.replace(/\/$/, '');
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+
+    const newSocket = io(`${url}${qs}`, {
+      path: '/socket.io',
+      transports: ['websocket'],
+      reconnectionDelay: 1000,
+    });
+
+    newSocket.on('connect', () => {
+      supportedSymbols.forEach(s => newSocket.emit('subscribe', s));
+    });
+
+    newSocket.on('price_event', (msg) => {
+      const n = normalizeIncoming(msg);
+      if (!n) return;
+
+      const sym = msg.symbol.toUpperCase();
+      const change = ((n.c - n.o) / n.o) * 100;
+
+      set(state => ({
+        marketState: {
+          ...state.marketState,
+          [sym]: { price: n.c, change: change }
+        },
+        price: sym === state.currentSymbol ? n : state.price
+      }));
+    });
+
+    set({ socket: newSocket });
+  },
+
+  register: async (email, password, isVip) => {
+    const res = await fetch(`${AUTH_BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, is_vip: isVip })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || res.statusText || 'Registration failed');
+    }
+    await get().login(email, password);
+  },
+
+  login: async (email, password) => {
+    const res = await fetch(`${AUTH_BASE}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || res.statusText || 'Login failed');
+      throw new Error(err.error || 'Login failed');
     }
-    const body = await res.json();
-    const t = body.token;
-    if (!t) throw new Error('No token returned');
-    try { localStorage.setItem('token', t); } catch (e) {}
-    setToken(t);
-    // reconnect socket with token
-    connectSocket(t);
-    return t;
-  }, []);
+    const data = await res.json();
 
-  const logout = React.useCallback(() => {
-    try { localStorage.removeItem('token'); } catch (e) {}
-    setToken(null);
-    if (socket) {
-      socket.disconnect();
-      socket = null;
-    }
-  }, []);
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('isVip', String(data.is_vip));
 
-  const authFetch = React.useCallback((input, init = {}) => {
-    const url = typeof input === 'string' && input.startsWith('http') ? input : `${API_BASE}${input.startsWith('/') ? '' : '/'}${input}`;
-    init.headers = { ...(init.headers || {}), 'Content-Type': 'application/json' };
-    if (token) init.headers['Authorization'] = `Bearer ${token}`;
-    return fetch(url, init);
-  }, [token]);
+    set({ token: data.token, isVip: !!data.is_vip });
 
- // ...existing code...
-  const connectSocket = React.useCallback((providedToken) => {
-    const tok = providedToken !== undefined ? providedToken : token;
-    if (socket && socket.connected) return socket;
+    const { socket } = get();
+    if (socket) socket.disconnect();
+    get().connectSocket();
+  },
 
-    const path = '/socket.io';
-    // Build URL and append token as query param so Kong can read it during WS handshake
-    let url = WS_BASE;
-    if (!/^https?:\/\//.test(url)) url = window.location.origin.replace(/\/$/, '');
-    const qs = tok ? `?token=${encodeURIComponent(tok)}` : '';
-    socket = io(`${url}${qs}`, { path, transports: ['websocket'] });
+  logout: () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('isVip');
+    const { socket } = get();
+    if (socket) socket.disconnect();
+    set({ token: null, isVip: false, socket: null });
+  },
 
-    socket.on('connect', () => console.log('socket connected', socket.id));
-    socket.on('disconnect', (reason) => console.log('socket disconnected', reason));
-    socket.on('price_event', (msg) => {
-      const n = normalizeIncoming(msg);
-      if (n) setPrice(n);
-    });
-    socket.on('connect_error', (err) => console.error('socket connect_error', err));
-    return socket;
-  }, [token]);
-
-  // auto-connect / reconnect when token changes
-  React.useEffect(() => {
-    if (token) {
-      connectSocket(token);
-    } else {
-      // ensure disconnect if logged out
-      if (socket) { socket.disconnect(); socket = null; }
-    }
-    return () => {
-      if (socket) { socket.disconnect(); socket = null; }
+  authFetch: async (endpoint, options = {}) => {
+    const { token } = get();
+    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
     };
-  }, [token, connectSocket]); // eslint-disable-line
-// ...existing code...
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return fetch(url, { ...options, headers });
+  }
+}));
 
-  return {
-    price,
-    connectSocket,
-    login,
-    logout,
-    token,
-    authFetch
-  };
-}
+export default useStore;

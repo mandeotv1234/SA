@@ -1,51 +1,103 @@
 const db = require('../config/db');
+const axios = require('axios');
 
-// TradingView Lightweight Charts yêu cầu mảng object đã sort theo time:
-// [{ time: 16424252, open: 10, high: 15, low: 5, close: 12 },...]
+// Helper to fetch from Binance
+async function fetchBinanceKlines(symbol, interval = '1m', limit = 1000, endTime = null) {
+  try {
+    let url = `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+    if (endTime) {
+      url += `&endTime=${endTime}`;
+    }
+    const res = await axios.get(url);
+    // Binance: [Open Time, Open, High, Low, Close, Volume, Close Time, ...]
+    return res.data.map(k => ({
+      time: Math.floor(k[0] / 1000),
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+      value: parseFloat(k[5]), // Volume
+      color: parseFloat(k[4]) >= parseFloat(k[1]) ? 'rgba(8, 153, 129, 0.5)' : 'rgba(242, 54, 69, 0.5)' // Volume Color
+    }));
+  } catch (e) {
+    console.error("Binance API Error:", e.message);
+    return [];
+  }
+}
+
 exports.getKlines = async (req, res) => {
-  const { symbol = 'BTCUSDT', limit = 1000, start, end } = req.query;
+  const { symbol = 'BTCUSDT', limit = 1000, interval = '1m', end } = req.query;
+  const sym = symbol.toUpperCase();
 
   try {
-    const sym = symbol.toUpperCase();
+    // 1. Pagination / History Request
+    if (end) {
+      // 'end' is unix timestamp (seconds). Binance needs milliseconds.
+      const endTimeMs = (Math.floor(Number(end)) * 1000) - 1;
+      const data = await fetchBinanceKlines(sym, interval, limit, endTimeMs);
 
-    // If start/end provided prefer time-range query, otherwise fall back to latest N candles
-    let text, values;
-    if (start || end) {
-      const clauses = ['symbol = $1'];
-      values = [sym];
-      let idx = 2;
-      if (start) {
-        const s = isNaN(Number(start)) ? new Date(start) : new Date(Number(start) * 1000);
-        clauses.push(`time >= $${idx++}`);
-        values.push(s);
+      if (data.length > 0) {
+        return res.json(data);
       }
-      if (end) {
-        const e = isNaN(Number(end)) ? new Date(end) : new Date(Number(end) * 1000);
-        clauses.push(`time <= $${idx++}`);
-        values.push(e);
-      }
-      text = `SELECT time, open, high, low, close FROM market_klines WHERE ${clauses.join(' AND ')} ORDER BY time ASC LIMIT $${idx}`;
-      values.push(limit);
-    } else {
-      text = `SELECT time, open, high, low, close FROM market_klines WHERE symbol = $1 ORDER BY time DESC LIMIT $2`;
-      values = [sym, limit];
+
+      console.warn(`[MarketController] Binance history empty for ${sym} @ ${end}, checking DB...`);
+      // Fallback: Continue to DB query below, but apply 'end' filter
+      // (We need to modify the DB query logic to handle 'end' param if we fall through, 
+      //  or just duplicate the DB query here for simplicity)
+
+      try {
+        const result = await db.query(
+          `SELECT time, open, high, low, close FROM market_klines 
+           WHERE symbol = $1 AND time < to_timestamp($3)
+           ORDER BY time DESC LIMIT $2`,
+          [sym, limit, Number(end)]
+        );
+        const dbRows = result.rows.reverse().map(row => ({
+          time: Math.floor(new Date(row.time).getTime() / 1000),
+          open: parseFloat(row.open),
+          high: parseFloat(row.high),
+          low: parseFloat(row.low),
+          close: parseFloat(row.close),
+          value: 0,
+          color: 'rgba(255, 255, 255, 0.2)'
+        }));
+        return res.json(dbRows);
+      } catch (e) { console.error("DB History Fetch Error", e); }
+
+      return res.json([]);
     }
 
-    const result = await db.query(text, values);
+    // 2. Latest Data Request
+    // We prioritize Binance here to ensure we get Volume data which is crucial for the new UI.
+    console.log(`[MarketController] Fetching ${sym} from Binance (Latest)...`);
+    const binanceData = await fetchBinanceKlines(sym, interval, limit);
 
-    // if query returned DESC (latest N) we need to reverse to ASC
-    let rows = result.rows;
-    if (!start && !end) rows = rows.reverse();
+    if (binanceData.length > 0) {
+      return res.json(binanceData);
+    }
 
-    const formattedData = rows.map(row => ({
-      time: Math.floor(new Date(row.time).getTime() / 1000),
-      open: parseFloat(row.open),
-      high: parseFloat(row.high),
-      low: parseFloat(row.low),
-      close: parseFloat(row.close),
-    }));
+    console.warn(`[MarketController] Binance returned empty for ${sym}, falling back to DB...`);
 
-    res.json(formattedData);
+    // 3. Fallback to DB if Binance fails or returns empty
+    let dbRows = [];
+    try {
+      const result = await db.query(
+        `SELECT time, open, high, low, close FROM market_klines WHERE symbol = $1 ORDER BY time DESC LIMIT $2`,
+        [sym, limit]
+      );
+      // Format DB rows to match API response structure
+      dbRows = result.rows.reverse().map(row => ({
+        time: Math.floor(new Date(row.time).getTime() / 1000),
+        open: parseFloat(row.open),
+        high: parseFloat(row.high),
+        low: parseFloat(row.low),
+        close: parseFloat(row.close),
+        value: 0, // No volume in DB fallback
+        color: 'rgba(255, 255, 255, 0.2)'
+      }));
+    } catch (e) { console.error("DB Fetch Error", e.message); }
+
+    res.json(dbRows);
 
   } catch (err) {
     console.error(err);

@@ -4,13 +4,16 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true, // Listen on 0.0.0.0 for Docker access
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/auth': 'http://localhost:8000',
+      // Internal Vite proxy (container -> container)
+      '/api': 'http://kong:8000',
+      '/auth': 'http://kong:8000',
       '/socket.io': {
-        target: 'ws://localhost:3000',
-        ws: true
+        target: 'http://stream-service:3000', // Direct to stream service for WS if Kong fails, or kong:8000
+        ws: true,
+        rewrite: (path) => path.replace(/^\/socket.io/, '/socket.io')
       }
     }
   }
