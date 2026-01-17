@@ -16,8 +16,28 @@ const run = async () => {
       try {
         const payload = JSON.parse(message.value.toString());
         const time = new Date();
-        const type = payload.type || (payload.insight && payload.insight.type) || 'unknown';
-        const body = payload.insight || payload;
+
+        // Determine type - support new aggregated_prediction format
+        let type = payload.type || 'unknown';
+        let body = payload;
+
+        // Handle nested insight format
+        if (payload.insight) {
+          body = payload.insight;
+        }
+
+        // Log different types appropriately
+        if (type === 'aggregated_prediction') {
+          const predictions = payload.predictions || [];
+          console.log(`[AGGREGATED] Received prediction for ${predictions.length} symbols`);
+          predictions.forEach(p => {
+            console.log(`  ${p.symbol}: ${p.direction} (${p.change_percent}%)`);
+          });
+        } else if (type === 'causal_event') {
+          console.log(`[CAUSAL] ${body.title?.substring(0, 50)}...`);
+        } else {
+          console.log(`[${type}] Received insight`);
+        }
 
         const client = await db.pool.connect();
         try {

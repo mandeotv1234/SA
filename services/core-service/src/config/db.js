@@ -6,14 +6,14 @@ const CONNECTION_STRING = process.env.DATABASE_URL || null;
 const pool = CONNECTION_STRING
   ? new Pool({ connectionString: CONNECTION_STRING })
   : new Pool({
-      user: process.env.DB_USER || 'dev',
-      host: process.env.DB_HOST || 'timescaledb',
-      database: process.env.DB_NAME || 'timeseriesdb',
-      password: process.env.DB_PASSWORD || 'dev',
-      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
-      max: 20,
-      idleTimeoutMillis: 30000,
-    });
+    user: process.env.DB_USER || 'dev',
+    host: process.env.DB_HOST || 'timescaledb',
+    database: process.env.DB_NAME || 'timeseriesdb',
+    password: process.env.DB_PASSWORD || 'dev',
+    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+    max: 20,
+    idleTimeoutMillis: 30000,
+  });
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
@@ -57,7 +57,8 @@ const initDB = async () => {
         source TEXT,
         title TEXT,
         sentiment_score DOUBLE PRECISION,
-        raw_score JSONB
+        raw_score JSONB,
+        UNIQUE (url)
       );
     `);
 
@@ -81,8 +82,8 @@ const initDB = async () => {
           );
         `);
         console.log("✅ market_klines converted to hypertable (timescaledb).");
-          try {
-            await client.query(`
+        try {
+          await client.query(`
               SELECT create_hypertable(
                 'news_sentiment',
                 'time',
@@ -90,12 +91,12 @@ const initDB = async () => {
                 migrate_data => TRUE
               );
             `);
-            console.log("✅ news_sentiment converted to hypertable (timescaledb).");
-          } catch (hyErrNews) {
-            console.warn('⚠️ create_hypertable for news_sentiment failed (continuing with standard table):', hyErrNews.message);
-          }
-              try {
-                await client.query(`
+          console.log("✅ news_sentiment converted to hypertable (timescaledb).");
+        } catch (hyErrNews) {
+          console.warn('⚠️ create_hypertable for news_sentiment failed (continuing with standard table):', hyErrNews.message);
+        }
+        try {
+          await client.query(`
                   SELECT create_hypertable(
                     'ai_insights',
                     'time',
@@ -103,10 +104,10 @@ const initDB = async () => {
                     migrate_data => TRUE
                   );
                 `);
-                console.log("✅ ai_insights converted to hypertable (timescaledb).");
-              } catch (hyErrInsights) {
-                console.warn('⚠️ create_hypertable for ai_insights failed (continuing with standard table):', hyErrInsights.message);
-              }
+          console.log("✅ ai_insights converted to hypertable (timescaledb).");
+        } catch (hyErrInsights) {
+          console.warn('⚠️ create_hypertable for ai_insights failed (continuing with standard table):', hyErrInsights.message);
+        }
       } catch (hyErr) {
         console.warn('⚠️ create_hypertable failed (continuing with standard table):', hyErr.message);
       }

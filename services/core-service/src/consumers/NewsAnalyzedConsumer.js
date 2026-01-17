@@ -28,7 +28,7 @@ const flushBufferToDB = async () => {
       values.push(item.title);
       values.push(item.sentiment_score);
       values.push(JSON.stringify(item.raw_score));
-      return `($${i+1}, $${i+2}, $${i+3}, $${i+4}, $${i+5}, $${i+6})`;
+      return `($${i + 1}, $${i + 2}, $${i + 3}, $${i + 4}, $${i + 5}, $${i + 6})`;
     }).join(',');
 
     const queryText = `
@@ -86,11 +86,22 @@ const normalizeSentiment = (payload) => {
       if (l === 'negative' || l === 'neg') s = -Math.abs(s);
       if (l === 'neutral') s = 0.0;
     }
-    return { signed: s, raw };
+    return { signed: s, raw: flattenRaw(raw) };
   }
 
   // fallback zero
-  return { signed: 0.0, raw };
+  return { signed: 0.0, raw: flattenRaw(raw) };
+};
+
+// Helper to flatten nested raw objects
+const flattenRaw = (data) => {
+  if (!data) return null;
+  let current = data;
+  // Unwrap nested 'raw' fields
+  while (current && typeof current === 'object' && current.raw) {
+    current = current.raw;
+  }
+  return current;
 };
 
 const run = async () => {

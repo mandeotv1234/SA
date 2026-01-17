@@ -1,135 +1,166 @@
-import os
-import json
+"""
+Heuristic-based content extraction without LLM.
+Uses BeautifulSoup + trafilatura for fast extraction.
+"""
 import logging
-import requests
 from typing import Dict
+from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
+import trafilatura
 
-LOG = logging.getLogger("crawler.llm")
+LOG = logging.getLogger("crawler.extraction")
 
-def _heuristic_extract(html: str) -> Dict:
-    """Fallback if LLM fails."""
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html, "html.parser")
-    title = soup.title.string.strip() if soup.title and soup.title.string else None
-    paragraphs = [p.get_text().strip() for p in soup.find_all("p")]
-    content = "\n\n".join(paragraphs)[:20000]
-    return {
-        "title": title, 
-        "date": None, 
-        "content": content,
-        "category": "General",
-        "relevance_score": 0.5,
-        "sentiment": "Neutral",
-        "user_rating": None
-    }
+# Keywords for relevance and category detection
+CRYPTO_KEYWORDS = [
+    'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'blockchain',
+    'binance', 'coinbase', 'defi', 'nft', 'altcoin', 'token',
+    'solana', 'sol', 'bnb', 'doge', 'dogecoin', 'xrp', 'ripple',
+    'fed', 'federal reserve', 'interest rate', 'inflation', 'cpi',
+    'sec', 'regulation', 'etf', 'halving', 'whale', 'liquidation'
+]
 
-def extract_with_llm(html_content: str, url: str) -> Dict:
-    """
-    Uses a self-hosted LLM (Llama 3.2 via Ollama/Ngrok) to parse raw HTML 
-    and extract structured JSON data.
-    """
+SYMBOL_MAPPING = {
+    'bitcoin': 'BTCUSDT', 'btc': 'BTCUSDT',
+    'ethereum': 'ETHUSDT', 'eth': 'ETHUSDT',
+    'solana': 'SOLUSDT', 'sol': 'SOLUSDT',
+    'bnb': 'BNBUSDT', 'binance coin': 'BNBUSDT',
+    'dogecoin': 'DOGEUSDT', 'doge': 'DOGEUSDT',
+    'xrp': 'XRPUSDT', 'ripple': 'XRPUSDT',
+    'cardano': 'ADAUSDT', 'ada': 'ADAUSDT',
+}
+
+
+def _extract_title(soup: BeautifulSoup, html: str) -> str:
+    """Extract title using multiple strategies."""
+    # Try og:title
+    og_title = soup.find("meta", property="og:title")
+    if og_title and og_title.get("content"):
+        return og_title["content"].strip()
     
-    # Clean up HTML slightly to reduce token count
-    cleaned_html = html_content.strip() if html_content else ""
-    if len(cleaned_html) > 15000:
-        cleaned_html = cleaned_html[:15000] + "..."
+    # Try <title>
+    if soup.title and soup.title.string:
+        return soup.title.string.strip()
+    
+    # Try h1
+    h1 = soup.find("h1")
+    if h1:
+        return h1.get_text().strip()
+    
+    return "Untitled"
 
-    prompt = (
-        "Bạn là chuyên gia trích xuất tin tức tài chính. Phân tích HTML và trả về JSON.\n\n"
-        "QUY TẮC QUAN TRỌNG:\n"
-        "1. CHỈ XỬ LÝ bài viết tin tức thực sự về tài chính, crypto, kinh tế.\n"
-        "2. NẾU đây KHÔNG phải bài viết tin tức (trang chủ, trang danh mục, trang ứng dụng, trang liên hệ...), "
-        "trả về: {\"is_article\": false, \"reject_reason\": \"lý do\"}\n"
-        "3. NẾU là bài viết tin tức tài chính hợp lệ, trả về JSON với các key sau:\n\n"
-        "{\n"
-        "  \"is_article\": true,\n"
-        "  \"title\": \"Tiêu đề bài viết\",\n"
-        "  \"date\": \"YYYY-MM-DDTHH:MM:SSZ hoặc null\",\n"
-        "  \"content\": \"Tóm tắt nội dung tin tức (100-300 từ), tập trung vào sự kiện chính và tác động thị trường\",\n"
-        "  \"category\": \"Finance\" | \"Crypto\" | \"Economy\" | \"Policy\" | \"Market\",\n"
-        "  \"relevance_score\": 0.0-1.0 (mức độ liên quan đến thị trường crypto/tài chính),\n"
-        "  \"sentiment\": \"Positive\" | \"Negative\" | \"Neutral\",\n"
-        "  \"key_points\": [\"điểm chính 1\", \"điểm chính 2\"],\n"
-        "  \"affected_assets\": [\"BTC\", \"ETH\", ...] (các tài sản bị ảnh hưởng)\n"
-        "}\n\n"
-        "HTML Content:\n"
-        f"{cleaned_html}\n\n"
-        "CHỈ TRẢ VỀ JSON, KHÔNG CÓ TEXT KHÁC."
-    )
 
-    ollama_url = os.getenv("OLLAMA_API_URL")
-    if not ollama_url:
-        LOG.error("OLLAMA_API_URL is not set.")
-        return _heuristic_extract(html_content)
-        
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
-    api_endpoint = f"{ollama_url}/api/generate"
+def _extract_date(soup: BeautifulSoup) -> str | None:
+    """Extract publication date from HTML."""
+    for name in ("date", "pubdate", "publishdate", "article:published_time", 
+                 "og:pubdate", "og:published_time", "article:published"):
+        tag = soup.find("meta", {"name": name}) or soup.find("meta", {"property": name})
+        if tag and tag.get("content"):
+            try:
+                return dateparser.parse(tag["content"]).isoformat()
+            except:
+                pass
+    
+    time_tag = soup.find('time')
+    if time_tag:
+        dt = time_tag.get('datetime') or time_tag.get_text().strip()
+        if dt:
+            try:
+                return dateparser.parse(dt).isoformat()
+            except:
+                pass
+    return None
 
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json"
-    }
 
+def _extract_content(html: str) -> str:
+    """Extract main content using trafilatura."""
+    content = trafilatura.extract(html)
+    if content:
+        return content[:5000]  # Limit length
+    return ""
+
+
+def _detect_symbols(text: str) -> list:
+    """Detect which crypto symbols are mentioned in the text."""
+    text_lower = text.lower()
+    detected = set()
+    for keyword, symbol in SYMBOL_MAPPING.items():
+        if keyword in text_lower:
+            detected.add(symbol)
+    return list(detected) if detected else ['BTCUSDT']  # Default to BTC
+
+
+def _calculate_relevance(text: str) -> float:
+    """Calculate relevance score based on keyword density."""
+    text_lower = text.lower()
+    count = sum(1 for kw in CRYPTO_KEYWORDS if kw in text_lower)
+    # Base 0.3, +0.1 per keyword, max 1.0
+    return min(1.0, 0.3 + count * 0.1)
+
+
+def _detect_sentiment(text: str) -> str:
+    """Simple keyword-based sentiment detection."""
+    text_lower = text.lower()
+    positive = ['tăng', 'surge', 'bullish', 'rally', 'gain', 'profit', 'ath', 'breakout', 'soar']
+    negative = ['giảm', 'crash', 'bearish', 'dump', 'loss', 'scam', 'hack', 'ban', 'plunge', 'correction']
+    
+    pos = sum(1 for w in positive if w in text_lower)
+    neg = sum(1 for w in negative if w in text_lower)
+    
+    if pos > neg + 1:
+        return "Positive"
+    elif neg > pos + 1:
+        return "Negative"
+    return "Neutral"
+
+
+def extract_with_heuristics(html: str, url: str) -> Dict:
+    """
+    Extract article content using heuristics only.
+    No LLM calls - fast and efficient.
+    """
     try:
-        LOG.info(f"Sending HTML (len={len(cleaned_html)}) to Ollama at {ollama_url}...")
-        resp = requests.post(api_endpoint, json=payload, timeout=60)
-        resp.raise_for_status()
+        soup = BeautifulSoup(html, "html.parser")
         
-        data = resp.json()
-        raw_response = data.get("response", "")
+        title = _extract_title(soup, html)
+        date = _extract_date(soup)
+        content = _extract_content(html)
         
-        # Parse JSON from the response text
-        j = None
-        try:
-            j = json.loads(raw_response)
-        except json.JSONDecodeError:
-            # Fallback: try to find JSON block if Llama adds extra text
-            start = raw_response.find('{')
-            end = raw_response.rfind('}') + 1
-            if start != -1 and end != -1:
-                try:
-                    j = json.loads(raw_response[start:end])
-                except:
-                    pass
+        if not content or len(content) < 100:
+            # Fallback: get paragraphs
+            paragraphs = [p.get_text().strip() for p in soup.find_all("p") if len(p.get_text().strip()) > 50]
+            content = "\n\n".join(paragraphs[:10])[:5000]
         
-        if not j:
-            LOG.error(f"Failed to parse JSON from Ollama response: {raw_response[:200]}...")
-            return _heuristic_extract(html_content)
-
-        # Check if LLM rejected this as non-article
-        if j.get("is_article") == False:
-            reject_reason = j.get("reject_reason", "Not a news article")
-            LOG.info(f"LLM rejected {url}: {reject_reason}")
-            return {"error": "not_article", "reason": reject_reason, "url": url}
-
-        # Post-process date
-        published_iso = j.get("date")
-        if published_iso:
-             try:
-                published_iso = dateparser.parse(published_iso).isoformat()
-             except:
-                published_iso = None
+        full_text = f"{title} {content}"
         
-        # Extract relevance score, default to 0.7 for valid articles
-        relevance = j.get("relevance_score")
-        if relevance is None or not isinstance(relevance, (int, float)):
-            relevance = 0.7  # Default high relevance for LLM-approved articles
+        symbols = _detect_symbols(full_text)
+        relevance = _calculate_relevance(full_text)
+        sentiment = _detect_sentiment(full_text)
+        
+        # Determine category
+        if relevance >= 0.5:
+            category = "Crypto"
+        elif relevance >= 0.4:
+            category = "Finance"
+        else:
+            category = "General"
+        
+        LOG.info(f"Extracted: {title[:50]}... | symbols={symbols} | rel={relevance:.2f}")
         
         return {
-            "title": j.get("title"), 
-            "date": published_iso, 
-            "content": j.get("content"),
-            "category": j.get("category") or "Crypto",
-            "relevance_score": relevance,
-            "sentiment": j.get("sentiment") or "Neutral",
-            "key_points": j.get("key_points"),
-            "affected_assets": j.get("affected_assets"),
-            "user_rating": j.get("user_rating")
+            "title": title,
+            "date": date,
+            "content": content,
+            "category": category,
+            "relevance_score": round(relevance, 2),
+            "sentiment": sentiment,
+            "symbols": symbols,
+            "url": url
         }
-
+        
     except Exception as e:
-        LOG.error(f"Ollama extraction failed for {url}: {e}")
-        return _heuristic_extract(html_content)
+        LOG.error(f"Extraction failed for {url}: {e}")
+        return {
+            "error": "extraction_failed",
+            "detail": str(e),
+            "url": url
+        }

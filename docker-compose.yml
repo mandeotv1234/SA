@@ -128,8 +128,6 @@ services:
     depends_on:
       timescaledb:
         condition: service_started
-      kafka:
-        condition: service_healthy
     ports:
       - "3001:3000"
     volumes:
@@ -148,9 +146,6 @@ services:
       KAFKA_BROKERS: kafka:9092
       SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt"
       SEND_PARTIAL: "true"
-    depends_on:
-      kafka:
-        condition: service_healthy
     ports:
       - "3002:3000"
     volumes:
@@ -169,13 +164,10 @@ services:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379/0
       NEWS_RAW_TOPIC: news_raw
-      OLLAMA_API_URL: "https://045f5fe73b9f.ngrok-free.app"
-      OLLAMA_MODEL: "llama3.2"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
       CRAWL_SOURCES: >-
         https://cointelegraph.com/rss, https://cryptonews.com/news/feed/, https://decrypt.co/feed, https://bitcoinmagazine.com/.rss/full/, https://theblock.co/rss.xml, https://www.coindesk.com/arc/outboundfeeds/rss/, https://coin68.com/, https://blogtienao.com/, https://coinphoton.com/, https://tienthuattoan.com/, https://vietnambiz.vn/bitcoin.htm, https://cafef.vn/tai-chinh-ngan-hang.chn, https://vneconomy.vn/tag/bitcoin, https://thitruongtaichinhtiente.vn/bitcoin-ptag.html
     depends_on:
-      kafka:
-        condition: service_healthy
       redis:
         condition: service_started
     ports:
@@ -195,15 +187,14 @@ services:
       KAFKA_BROKERS: kafka:9092
       NEWS_RAW_TOPIC: news_raw
       NEWS_ANALYZED_TOPIC: news_analyzed
-      KAFKA_GROUP: ai-service-group-v2
+      KAFKA_GROUP: ai-service-group-v4
       AI_INSIGHTS_TOPIC: ai_insights
-      FINBERT_MODEL: ProsusAI/finbert
-      CAUSAL_INTERVAL_MIN: 1
-      OLLAMA_API_URL: "https://045f5fe73b9f.ngrok-free.app"
-      OLLAMA_MODEL: "llama3.2"
-    depends_on:
-      kafka:
-        condition: service_healthy
+      # Gemini configuration
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      GEMINI_MODEL: "gemini-1.5-pro-latest"
+      # Scheduled prediction settings
+      PREDICTION_INTERVAL_SEC: "300" # 5 minutes
+      MAX_NEWS_BUFFER: "100"
     volumes:
       - ./services/ai-service:/app
     healthcheck:
@@ -213,20 +204,6 @@ services:
       retries: 6
     ports:
       - "8002:8002"
-
-  web-frontend:
-    build:
-      context: ./web-frontend
-    ports:
-      - "5173:5173"
-    depends_on:
-      - core-service
-      - stream-service
-    environment:
-      VITE_API_URL: "http://localhost:8000"
-    volumes:
-      - ./web-frontend:/app
-      - /app/node_modules
 
 volumes:
   pgdata:

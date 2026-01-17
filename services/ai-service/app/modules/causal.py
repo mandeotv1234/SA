@@ -10,7 +10,8 @@ import requests
 from datetime import datetime, timezone
 import logging
 try:
-    from google import generativeai as genai
+    from google import genai
+    from google.genai import types
     HAS_GENAI = True
 except Exception:
     HAS_GENAI = False
@@ -223,68 +224,71 @@ def analyze_event_causal(news_payload: dict):
             "is_prediction": is_prediction
         }
 
-        # optionally generate a short natural-language rationale via Ollama (Llama 3.2 via Ngrok)
+        # optionally generate a short natural-language rationale via Gemini 1.5 Flash
         rationale = None
         prediction_direction = None
         predicted_change_pct = None
         try:
             if is_prediction:
                 prompt = (
-                    "Bạn là một chuyên gia phân tích tài chính AI. Nhiệm vụ của bạn là DỰ ĐOÁN xu hướng giá trong 24 giờ tới.\n\n"
-                    "Dữ liệu đầu vào:\n"
-                    f"- Tin tức: {news_payload.get('title') or ''}\n"
-                    f"- URL: {news_payload.get('url')}\n"
-                    f"- Cặp tiền: {sym}\n"
-                    f"- Giá hiện tại: {pre_avg:.2f} USD\n"
-                    f"- Phản ứng ban đầu ({len(post_vals)} phút): {ret*100:.4f}%\n"
-                    f"- Cảm xúc tin tức: {news_payload.get('sentiment_label') or 'Neutral'}\n\n"
-                    "YÊU CẦU: Trả về JSON với định dạng CHÍNH XÁC sau:\n"
-                    "```json\n"
+                    "Bạn là chuyên gia phân tích tài chính AI với khả năng phân tích NHÂN QUẢ.\n\n"
+                    "DỮ LIỆU ĐẦU VÀO:\n"
+                    f"• Tin tức: {news_payload.get('title') or 'N/A'}\n"
+                    f"• Nội dung: {(news_payload.get('raw', {}).get('content') or '')[:500]}\n"
+                    f"• Cặp tiền: {sym}\n"
+                    f"• Giá hiện tại: ${pre_avg:.2f}\n"
+                    f"• Phản ứng thị trường ({len(post_vals)} phút đầu): {ret*100:.4f}%\n"
+                    f"• Sentiment tin tức: {news_payload.get('sentiment_label') or 'Neutral'}\n\n"
+                    "NHIỆM VỤ: Phân tích NHÂN QUẢ và DỰ ĐOÁN xu hướng giá trong 24 giờ tới.\n\n"
+                    "YÊU CẦU TRẢ VỀ JSON:\n"
                     "{\n"
-                    '  "direction": "UP" hoặc "DOWN" hoặc "NEUTRAL",\n'
-                    '  "predicted_change_pct": số phần trăm dự đoán (ví dụ: 2.5 cho tăng 2.5%, -1.5 cho giảm 1.5%),\n'
-                    '  "rationale": "Giải thích ngắn gọn nguyên nhân và hậu quả (tiếng Việt, 1-2 câu)"\n'
-                    "}\n"
-                    "```\n\n"
-                    "CHỈ TRẢ VỀ JSON, KHÔNG CÓ TEXT KHÁC."
+                    '  "direction": "UP" | "DOWN" | "NEUTRAL",\n'
+                    '  "predicted_change_pct": số phần trăm (VD: 2.5 cho tăng 2.5%, -3.0 cho giảm 3%),\n'
+                    '  "confidence": 0.0-1.0 (độ tin cậy của dự đoán),\n'
+                    '  "rationale": "Phân tích nhân quả chi tiết: NGUYÊN NHÂN (tin tức gì) → TÁC ĐỘNG (ảnh hưởng thế nào) → KẾT QUẢ (giá sẽ thay đổi ra sao). Viết 2-3 câu tiếng Việt rõ ràng.",\n'
+                    '  "key_factors": ["yếu tố 1", "yếu tố 2"] (các yếu tố chính ảnh hưởng giá)\n'
+                    "}\n\n"
+                    "CHỈ TRẢ VỀ JSON HỢP LỆ."
                 )
             else:
                 prompt = (
-                    "Bạn là một chuyên gia phân tích tài chính. Dựa trên dữ liệu lịch sử sau, hãy giải thích biến động giá:\n"
-                    f"Tiêu đề: {news_payload.get('title') or ''}\n"
-                    f"URL: {news_payload.get('url') or ''}\n"
-                    f"Symbol: {sym}\n"
-                    f"Pre average: {pre_avg:.6f}, Post average: {post_avg:.6f}, Return: {ret:.6f}\n"
-                    "Trả về JSON: {\"direction\": \"UP/DOWN/NEUTRAL\", \"actual_change_pct\": X, \"rationale\": \"...\"}"
+                    "Bạn là chuyên gia phân tích tài chính. Giải thích biến động giá đã xảy ra:\n\n"
+                    f"• Tin tức: {news_payload.get('title') or 'N/A'}\n"
+                    f"• Symbol: {sym}\n"
+                    f"• Giá trước tin: ${pre_avg:.2f}\n"
+                    f"• Giá sau tin: ${post_avg:.2f}\n"
+                    f"• Thay đổi thực tế: {ret*100:.4f}%\n\n"
+                    "Trả về JSON:\n"
+                    '{"direction": "UP/DOWN/NEUTRAL", "actual_change_pct": X, "rationale": "Phân tích nhân quả: nguyên nhân → hậu quả"}'
                 )
 
-            ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-            model = os.getenv("OLLAMA_MODEL", "llama3.2")
-            api_endpoint = f"{ollama_url}/api/generate"
-            
-            payload = {
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json"
-            }
-            
-            # Log attempt (helpful for debugging)
-            print(f"Calling Ollama at {api_endpoint} with model {model}...")
-            
-            start_t = time.time()
-            response = requests.post(api_endpoint, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                data = response.json()
-                raw_response = data.get("response", "")
-                print(f"Ollama generation succeeded in {time.time()-start_t:.2f}s")
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                print("GEMINI_API_KEY not set, skipping prediction")
+                rationale = None
+            else:
+                client = genai.Client(api_key=api_key)
+                
+                print(f"Calling Gemini 2.0 Flash for prediction...")
+                start_t = time.time()
+                
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.3
+                    )
+                )
+                
+                raw_response = response.text
+                print(f"Gemini generation succeeded in {time.time()-start_t:.2f}s")
                 
                 # Parse JSON response
                 try:
                     import json as json_lib
                     parsed = json_lib.loads(raw_response)
-                    prediction_direction = parsed.get("direction", "NEUTRAL").upper()
+                    prediction_direction = str(parsed.get("direction", "NEUTRAL")).upper()
                     predicted_change_pct = float(parsed.get("predicted_change_pct", 0) or 0)
                     rationale = parsed.get("rationale", "")
                     
@@ -306,15 +310,11 @@ def analyze_event_causal(news_payload: dict):
                         insight['return_pct'] = 0.0
                         
                 except Exception as parse_err:
-                    print(f"Failed to parse Ollama JSON response: {parse_err}")
+                    print(f"Failed to parse Gemini JSON response: {parse_err}")
                     rationale = raw_response  # Use raw text as fallback
-                    
-            else:
-                print(f"Ollama failed with status {response.status_code}: {response.text}")
-                rationale = None
 
         except Exception as e:
-            print(f"Ollama prediction error: {e}")
+            print(f"Gemini prediction error: {e}")
             rationale = None
 
         # attach rationale and produce insight message

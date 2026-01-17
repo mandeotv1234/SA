@@ -49,12 +49,14 @@ SELECT create_hypertable('market_klines', 'time', if_not_exists => TRUE);
 
 -- TimescaleDB Hypertable for news_sentiment
 CREATE TABLE IF NOT EXISTS news_sentiment (
-    id SERIAL PRIMARY KEY,
+    id SERIAL,
     time TIMESTAMPTZ NOT NULL,
-    source VARCHAR(50),
+    url TEXT,
+    source VARCHAR(100),
+    title TEXT,
     sentiment_score FLOAT,
-    impact_magnitude FLOAT,
-    title TEXT
+    raw_score JSONB,
+    PRIMARY KEY (time, id)
 );
 
 SELECT create_hypertable('news_sentiment', 'time', if_not_exists => TRUE);

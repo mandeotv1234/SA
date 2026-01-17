@@ -8,5 +8,5 @@ beautifulsoup4
 redis
 python-dateutil
 lxml
-google-generativeai
+google-genai
 psycopg2-binary

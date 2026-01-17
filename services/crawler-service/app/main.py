@@ -152,8 +152,21 @@ async def process_url_if_new(url: str):
         except Exception:
             published_iso = None
 
+    # Extract title - use LLM title, fallback to heuristic extraction
+    title = data.get('title')
+    if not title or (isinstance(title, str) and len(title.strip()) == 0):
+        # Fallback: extract from URL or use generic title
+        from urllib.parse import urlparse
+        path = urlparse(url).path
+        # Generate title from URL path
+        title_from_path = path.split('/')[-1].replace('-', ' ').replace('.html', '').strip()
+        if title_from_path:
+            title = title_from_path.title()
+        else:
+            title = f"News from {_get_source_from_url(url)}"
+    
     # Extract symbol from title + content
-    full_text = (data.get('title') or '') + ' ' + (data.get('content') or '')
+    full_text = (title or '') + ' ' + (data.get('content') or '')
     symbol = _extract_symbol(full_text)
     
     if not symbol and len(full_text) > 100:
@@ -162,13 +175,13 @@ async def process_url_if_new(url: str):
     payload = {
         'source': _get_source_from_url(url),
         'url': url,
-        'title': data.get('title'),
+        'title': title,
         'content': data.get('content'),
         'published_at': published_iso,
         'symbol': symbol,
         'sentiment': data.get('sentiment'),
         'user_rating': data.get('user_rating'),
-        'category': data.get('category'),
+        'category': data.get('category') if isinstance(data.get('category'), str) else 'General',
         'relevance_score': data.get('relevance_score')
     }
 
