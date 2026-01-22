@@ -1,0 +1,22 @@
+{
+  "name": "stream-ingester",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "axios": "^1.13.2",
+    "kafkajs": "^2.2.4",
+    "redis": "^5.10.0",
+    "socket.io": "^4.8.1",
+    "dotenv": "^16.0.0",
+    "ws": "^8.18.3"
+  }
+}

@@ -14,26 +14,38 @@ const kafka = new Kafka({
     }
 });
 
-const consumer = kafka.consumer({ groupId: 'stream-service-group' });
+// Use a unique group ID for each instance to ensure ALL instances receive the price updates (Broadcast pattern)
+const groupId = `stream-gateway-${Math.random().toString(36).substring(7)}`;
+
+const consumer = kafka.consumer({ groupId });
 
 const initConsumer = async (io) => {
     try {
         await consumer.connect();
-        console.log('Stream Service Kafka Consumer connected');
+        console.log(`Stream Gateway Consumer connected (Group: ${groupId})`);
 
         await consumer.subscribe({ topic: 'user.events', fromBeginning: false });
+        await consumer.subscribe({ topic: 'market.prices', fromBeginning: false });
 
         await consumer.run({
             eachMessage: async ({ topic, partition, message }) => {
                 try {
                     const rawMessage = message.value.toString();
-                    console.log('Stream Service received:', rawMessage);
                     const payload = JSON.parse(rawMessage);
 
-                    if (payload.event === 'user.upgraded') {
-                        const { userId } = payload;
-                        console.log(`Broadcasting vip_update to user_${userId}`);
-                        io.to(`user_${userId}`).emit('vip_update', { isVip: true });
+                    // Handle VIP User Events
+                    if (topic === 'user.events') {
+                        if (payload.event === 'user.upgraded') {
+                            const { userId } = payload;
+                            console.log(`Broadcasting vip_update to user_${userId}`);
+                            io.to(`user_${userId}`).emit('vip_update', { isVip: true });
+                        }
+                    }
+
+                    // Handle Market Price Events from Ingester
+                    if (topic === 'market.prices') {
+                        const symbolRoom = payload.symbol.toUpperCase();
+                        io.to(symbolRoom).volatile.emit('price_event', payload);
                     }
 
                 } catch (err) {

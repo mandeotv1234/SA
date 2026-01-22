@@ -2,21 +2,16 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const { createClient } = require('redis');
-const BinanceClient = require('./binance-client');
-const { initProducer, sendPriceEvent, disconnectProducer } = require('./kafkaProducer');
 const { initConsumer } = require('./kafkaConsumer');
 
 const PORT = process.env.PORT || 3000;
-const SYMBOLS = (process.env.SYMBOLS || 'btcusdt,ethusdt').split(',').map(s => s.trim().toLowerCase());
-const INTERVAL = process.env.INTERVAL || '1m';
-const SEND_PARTIAL = (process.env.SEND_PARTIAL || 'false') === 'true';
 const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
 
 // Optimized HTTP Server
 const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end('{"alive": true}');
+    res.end('{"alive": true, "role": "gateway"}');
     return;
   }
   res.writeHead(404);
@@ -24,7 +19,7 @@ const httpServer = createServer((req, res) => {
 });
 
 async function start() {
-  // 1. Setup Redis Adapter for Horizontal Scaling
+  // 1. Setup Redis Adapter for Horizontal Scaling (Socket.IO coordination)
   const pubClient = createClient({ url: REDIS_URL });
   const subClient = pubClient.duplicate();
 
@@ -46,35 +41,12 @@ async function start() {
     adapter: createAdapter(pubClient, subClient)
   });
 
+  // 2. Start Kafka Consumer (Receives Prices & Events -> Broadcasts to Sockets)
   try {
-    await initProducer();
-    await initConsumer(io); // Start Consumer
+    await initConsumer(io);
   } catch (e) {
-    console.error("Kafka init/Consumer failed, starting without proper Kafka...", e);
+    console.error("Kafka Gateway init failed", e);
   }
-
-  const client = new BinanceClient(SYMBOLS, INTERVAL);
-
-  client.on('open', () => {
-    console.log("Binance Stream Started for symbols:", SYMBOLS);
-  });
-
-  client.on('kline', (msg) => {
-    if (!SEND_PARTIAL && !msg.kline.isFinal) return;
-
-    // Use Room-based broadcasting: io.to(SYMBOL).emit(...)
-    // This ensures only clients interested in this symbol receive the packet.
-    // Significant bandwidth saving for 1000+ clients.
-    const symbolRoom = msg.symbol.toUpperCase();
-
-    // volatile: if client is lagging, drop the packet (realtime data)
-    io.to(symbolRoom).volatile.emit('price_event', msg);
-
-    // Also send to Kafka for persistence/analytics
-    sendPriceEvent(msg);
-  });
-
-  client.connect();
 
   io.on('connection', (socket) => {
     // Optional monitoring log
@@ -83,7 +55,7 @@ async function start() {
       console.log(`Monitor: ${clientsCount} clients connected`);
     }
 
-    // Client subscribes to a specific symbol
+    // Client subscribes to a specific symbol (Price Feed)
     socket.on('subscribe', (symbol) => {
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
@@ -91,15 +63,13 @@ async function start() {
       }
     });
 
-    // Client joins their personal room for notifications
+    // Client joins their personal room (User Notifications)
     socket.on('join_user_room', (userId) => {
       if (userId && typeof userId === 'string') {
-        console.log(`Socket ${socket.id} joined room user_${userId}`);
         socket.join(`user_${userId}`);
       }
     });
 
-    // Client unsubscribes
     socket.on('unsubscribe', (symbol) => {
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
@@ -108,13 +78,11 @@ async function start() {
     });
   });
 
-  httpServer.listen(PORT, () => console.log(`Stream Service running on port ${PORT}`));
+  httpServer.listen(PORT, () => console.log(`Stream Gateway running on port ${PORT}`));
 
   const shutdown = async () => {
-    console.log('Shutting down...');
-    client.close();
+    console.log('Shutting down Gateway...');
     io.close();
-    await disconnectProducer();
     await pubClient.disconnect();
     await subClient.disconnect();
     process.exit(0);

@@ -161,7 +161,7 @@ services:
       SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt"
       SEND_PARTIAL: "true"
     ports:
-      - "3002:3000"
+      - "3002-3005:3000"
     volumes:
       - ./services/stream-service:/app
       - /app/node_modules
@@ -228,6 +228,21 @@ services:
       retries: 6
     ports:
       - "8002:8002"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  stream-ingester:
+    build:
+      context: ./services/stream-ingester
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt"
+    depends_on:
+      kafka:
+        condition: service_healthy
     logging:
       driver: "json-file"
       options:
