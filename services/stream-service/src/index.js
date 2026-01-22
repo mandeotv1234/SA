@@ -4,6 +4,7 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const { createClient } = require('redis');
 const BinanceClient = require('./binance-client');
 const { initProducer, sendPriceEvent, disconnectProducer } = require('./kafkaProducer');
+const { initConsumer } = require('./kafkaConsumer');
 
 const PORT = process.env.PORT || 3000;
 const SYMBOLS = (process.env.SYMBOLS || 'btcusdt,ethusdt').split(',').map(s => s.trim().toLowerCase());
@@ -13,13 +14,13 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
 
 // Optimized HTTP Server
 const httpServer = createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"alive": true}');
-      return;
-    }
-    res.writeHead(404);
-    res.end();
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"alive": true}');
+    return;
+  }
+  res.writeHead(404);
+  res.end();
 });
 
 async function start() {
@@ -47,12 +48,13 @@ async function start() {
 
   try {
     await initProducer();
+    await initConsumer(io); // Start Consumer
   } catch (e) {
-    console.error("Kafka init failed, starting without Kafka...", e);
+    console.error("Kafka init/Consumer failed, starting without proper Kafka...", e);
   }
 
   const client = new BinanceClient(SYMBOLS, INTERVAL);
-  
+
   client.on('open', () => {
     console.log("Binance Stream Started for symbols:", SYMBOLS);
   });
@@ -64,12 +66,12 @@ async function start() {
     // This ensures only clients interested in this symbol receive the packet.
     // Significant bandwidth saving for 1000+ clients.
     const symbolRoom = msg.symbol.toUpperCase();
-    
+
     // volatile: if client is lagging, drop the packet (realtime data)
     io.to(symbolRoom).volatile.emit('price_event', msg);
 
     // Also send to Kafka for persistence/analytics
-    sendPriceEvent(msg); 
+    sendPriceEvent(msg);
   });
 
   client.connect();
@@ -78,23 +80,31 @@ async function start() {
     // Optional monitoring log
     const clientsCount = io.engine.clientsCount;
     if (clientsCount % 100 === 0) {
-        console.log(`Monitor: ${clientsCount} clients connected`);
+      console.log(`Monitor: ${clientsCount} clients connected`);
     }
 
     // Client subscribes to a specific symbol
     socket.on('subscribe', (symbol) => {
-        if (symbol && typeof symbol === 'string') {
-            const room = symbol.toUpperCase();
-            socket.join(room);
-        }
+      if (symbol && typeof symbol === 'string') {
+        const room = symbol.toUpperCase();
+        socket.join(room);
+      }
+    });
+
+    // Client joins their personal room for notifications
+    socket.on('join_user_room', (userId) => {
+      if (userId && typeof userId === 'string') {
+        console.log(`Socket ${socket.id} joined room user_${userId}`);
+        socket.join(`user_${userId}`);
+      }
     });
 
     // Client unsubscribes
     socket.on('unsubscribe', (symbol) => {
-        if (symbol && typeof symbol === 'string') {
-            const room = symbol.toUpperCase();
-            socket.leave(room);
-        }
+      if (symbol && typeof symbol === 'string') {
+        const room = symbol.toUpperCase();
+        socket.leave(room);
+      }
     });
   });
 
@@ -109,7 +119,7 @@ async function start() {
     await subClient.disconnect();
     process.exit(0);
   };
-  
+
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

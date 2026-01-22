@@ -16,15 +16,25 @@ const processPayment = async (transaction) => {
 
     // 2. Parse Content
     const content = transaction.content || '';
-    // Match UUID format: VIP <UUID> where UUID can contain letters, numbers, and hyphens
-    const match = content.match(/VIP\s+([a-f0-9-]+)/i);
+
+    // Match strict UUID (with or without hyphens)
+    // Supports: 
+    // - f8f3a7da-f4e8-4af6-a5ba-72a6e3cef9bb
+    // - f8f3a7daf4e84af6a5ba72a6e3cef9bb
+    const match = content.match(/VIP\s+([a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12})/i);
 
     if (!match) {
-        console.log('Invalid content format:', content);
+        console.log('Invalid content format or User ID not found:', content);
         return;
     }
 
-    const userId = match[1];
+    let userId = match[1];
+
+    // Normalize UUID: If missing hyphens, insert them
+    if (userId.indexOf('-') === -1 && userId.length === 32) {
+        userId = `${userId.substr(0, 8)}-${userId.substr(8, 4)}-${userId.substr(12, 4)}-${userId.substr(16, 4)}-${userId.substr(20)}`;
+        console.log('Normalized User ID:', userId);
+    }
 
     try {
         // 3. Find or create transaction record

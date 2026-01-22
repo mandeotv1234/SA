@@ -13,7 +13,7 @@ const PAYMENT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const POLL_INTERVAL = 3000; // 3 seconds
 
 export default function UpgradeModal({ onClose }) {
-    const { token, isVip, setIsVip } = useStore();
+    const { token, isVip, setIsVip, authFetch } = useStore();
     const [step, setStep] = useState(1);
     const [userId, setUserId] = useState(null);
     const [loadingCode, setLoadingCode] = useState(true);
@@ -21,6 +21,7 @@ export default function UpgradeModal({ onClose }) {
     const [timeRemaining, setTimeRemaining] = useState(PAYMENT_TIMEOUT);
 
     useEffect(() => {
+        if (!token) return;
         // Decode token to get user ID
         try {
             const payload = JSON.parse(atob(token.split('.')[1]));
@@ -44,39 +45,33 @@ export default function UpgradeModal({ onClose }) {
         }
     }, [paymentStatus, timeRemaining]);
 
-    // Poll VIP status from auth service
+
+
+    // Watch for VIP status update from Store (Socket.IO)
     useEffect(() => {
-        if (paymentStatus !== 'waiting') return;
+        if (isVip && paymentStatus !== 'success') {
+            console.log('VIP status updated via Socket! Show success.');
+            setPaymentStatus('success');
+            setTimeout(() => onClose(), 3000);
+        }
+    }, [isVip, paymentStatus, onClose]);
 
-        const checkVipStatus = async () => {
-            try {
-                const res = await fetch('http://localhost:8000/auth/me', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
+    // Manual check only (no polling)
+    const checkVipStatus = async () => {
+        try {
+            console.log('Manual VIP status check...');
+            const res = await authFetch('/auth/me');
 
-                if (res.ok) {
-                    const data = await res.json();
-                    console.log('VIP status check:', data);
-                    if (data.user && data.user.is_vip) {
-                        console.log('User is now VIP! Updating state...');
-                        setPaymentStatus('success');
-                        setIsVip(true);
-                        // Close modal and let the UI update naturally
-                        setTimeout(() => {
-                            onClose();
-                        }, 2000);
-                    }
+            if (res.ok) {
+                const data = await res.json();
+                if (data.user && data.user.is_vip) {
+                    setIsVip(true); // This will trigger the effect above
                 }
-            } catch (error) {
-                console.error('Failed to check VIP status:', error);
             }
-        };
-
-        const interval = setInterval(checkVipStatus, POLL_INTERVAL);
-        return () => clearInterval(interval);
-    }, [paymentStatus, token, setIsVip, onClose]);
+        } catch (error) {
+            console.error('Failed to check VIP status:', error);
+        }
+    };
 
     const copyToClipboard = (text) => {
         navigator.clipboard.writeText(text);
@@ -208,9 +203,18 @@ export default function UpgradeModal({ onClose }) {
                             <Clock size={16} />
                             <span>Time remaining: {formatTime(timeRemaining)}</span>
                         </div>
-                        <p style={{ fontSize: 13, color: '#9ca3af' }}>
+                        <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16 }}>
                             Please wait while we confirm your payment. This may take a few moments.
                         </p>
+                        <button
+                            onClick={checkVipStatus}
+                            style={{
+                                background: 'transparent', border: '1px solid #26a69a', color: '#26a69a',
+                                padding: '6px 12px', borderRadius: 4, cursor: 'pointer', fontSize: 12
+                            }}
+                        >
+                            Check Status Now
+                        </button>
                     </div>
                 )}
 

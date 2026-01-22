@@ -16,43 +16,60 @@ const kafka = new Kafka({
 });
 
 const consumer = kafka.consumer({ groupId: 'auth-service-group' });
+const producer = kafka.producer();
 
 const run = async () => {
-    await consumer.connect();
-    console.log('PaymentSuccessConsumer connected');
-    await consumer.subscribe({ topic: 'payment.success', fromBeginning: false });
+    try {
+        await consumer.connect();
+        await producer.connect();
+        console.log('PaymentSuccessConsumer & Producer connected');
 
-    await consumer.run({
-        eachMessage: async ({ topic, partition, message }) => {
-            try {
-                const rawMessage = message.value.toString();
-                console.log('=== Received Kafka Message ===');
-                console.log('Topic:', topic);
-                console.log('Raw message:', rawMessage);
+        await consumer.subscribe({ topic: 'payment.success', fromBeginning: false });
 
-                const payload = JSON.parse(rawMessage);
-                console.log('Parsed payload:', payload);
-                console.log(`Processing payment.success for User ${payload.userId}`);
+        await consumer.run({
+            eachMessage: async ({ topic, partition, message }) => {
+                try {
+                    const rawMessage = message.value.toString();
+                    const payload = JSON.parse(rawMessage);
+                    console.log(`Processing payment for User ${payload.userId}`);
 
-                // Update User VIP status
-                const res = await pool.query(
-                    'UPDATE users SET is_vip = true WHERE id = $1 RETURNING id, email, is_vip',
-                    [payload.userId]
-                );
+                    // Update User VIP status
+                    const res = await pool.query(
+                        'UPDATE users SET is_vip = true WHERE id = $1 RETURNING id, email, is_vip',
+                        [payload.userId]
+                    );
 
-                console.log('Update query result:', res.rows);
+                    if (res.rowCount > 0) {
+                        console.log(`✅ User ${payload.userId} upgraded to VIP successfully!`);
 
-                if (res.rowCount > 0) {
-                    console.log(`✅ User ${payload.userId} upgraded to VIP successfully!`);
-                } else {
-                    console.error(`❌ User ${payload.userId} not found in database.`);
+                        // Publish event for Stream Service (Socket.IO)
+                        await producer.send({
+                            topic: 'user.events',
+                            messages: [
+                                {
+                                    key: payload.userId,
+                                    value: JSON.stringify({
+                                        event: 'user.upgraded',
+                                        userId: payload.userId,
+                                        timestamp: new Date().toISOString()
+                                    })
+                                }
+                            ]
+                        });
+                        console.log(`Events sent: user.upgraded for ${payload.userId}`);
+
+                    } else {
+                        console.error(`❌ User ${payload.userId} not found in database.`);
+                    }
+
+                } catch (err) {
+                    console.error('Error processing payment.success message:', err);
                 }
-
-            } catch (err) {
-                console.error('Error processing payment.success message:', err);
-            }
-        },
-    });
+            },
+        });
+    } catch (err) {
+        console.error('Failed to start Payment Consumer:', err);
+    }
 };
 
 module.exports = run;

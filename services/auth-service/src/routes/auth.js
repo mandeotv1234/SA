@@ -90,7 +90,17 @@ router.get('/me', async (req, res) => {
         return res.status(404).json({ error: 'user_not_found' });
       }
 
-      res.json({ user: { id: user.id, email: user.email, is_vip: !!user.is_vip, created_at: user.created_at } });
+      // Issue a new token with updated claims
+      const newToken = signToken({
+        sub: user.id,
+        email: user.email,
+        is_vip: !!user.is_vip
+      });
+
+      res.json({
+        user: { id: user.id, email: user.email, is_vip: !!user.is_vip, created_at: user.created_at },
+        token: newToken // Return fresh token
+      });
     } catch (decodeError) {
       console.error('JWT decode error:', decodeError);
       return res.status(401).json({ error: 'invalid_token' });

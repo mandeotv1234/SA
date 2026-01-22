@@ -73,6 +73,42 @@ const useStore = create((set, get) => ({
 
     newSocket.on('connect', () => {
       supportedSymbols.forEach(s => newSocket.emit('subscribe', s));
+
+      // Join user room for notifications
+      if (token) {
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          if (payload && payload.sub) {
+            console.log('Joining user room:', payload.sub);
+            newSocket.emit('join_user_room', payload.sub);
+          }
+        } catch (e) {
+          console.error('Failed to decode token for socket join', e);
+        }
+      }
+    });
+
+    newSocket.on('vip_update', async (data) => {
+      console.log('Received VIP update:', data);
+      if (data.isVip) {
+        try {
+          // Fetch fresh token with VIP claim
+          const res = await get().authFetch('/auth/me');
+          if (res.ok) {
+            const responseData = await res.json();
+            if (responseData.token) {
+              console.log('Token refreshed with VIP status');
+              localStorage.setItem('token', responseData.token);
+              localStorage.setItem('isVip', 'true');
+              set({ token: responseData.token, isVip: true });
+            }
+          }
+        } catch (e) {
+          console.error('Failed to refresh VIP token', e);
+        }
+
+        get().setIsVip(true);
+      }
     });
 
     newSocket.on('price_event', (msg) => {
@@ -139,7 +175,14 @@ const useStore = create((set, get) => ({
 
   authFetch: async (endpoint, options = {}) => {
     const { token } = get();
-    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+    let url = endpoint;
+    if (!endpoint.startsWith('http')) {
+      if (endpoint.startsWith('/auth')) {
+        url = `${GATEWAY}${endpoint}`;
+      } else {
+        url = `${API_BASE}${endpoint}`;
+      }
+    }
     const headers = {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
