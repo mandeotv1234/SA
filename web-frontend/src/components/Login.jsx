@@ -7,7 +7,7 @@ export default function Login() {
   const [mode, setMode] = useState('login'); // 'login' or 'register'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isVip, setIsVip] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -19,7 +19,7 @@ export default function Login() {
       if (mode === 'login') {
         await login(email.trim().toLowerCase(), password);
       } else {
-        await register(email.trim().toLowerCase(), password, isVip);
+        await register(email.trim().toLowerCase(), password);
       }
     } catch (err) {
       setError(err.message || 'Action failed');
@@ -67,17 +67,10 @@ export default function Login() {
           </div>
 
           {mode === 'register' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="checkbox"
-                id="isVip"
-                checked={isVip}
-                onChange={e => setIsVip(e.target.checked)}
-                style={{ cursor: 'pointer' }}
-              />
-              <label htmlFor="isVip" style={{ fontSize: 13, color: 'var(--accent-yellow)', cursor: 'pointer', fontWeight: 'bold' }}>
-                Register as VIP (Demo)
-              </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.5 }}>
+              <span style={{ fontSize: 13, color: '#9ca3af' }}>
+                Standard account (Upgrade available inside)
+              </span>
             </div>
           )}
 

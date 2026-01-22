@@ -15,9 +15,8 @@ LOG = logging.getLogger("ai.gemini")
 
 # Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# Using gemini-1.5-pro for high reasoning capability, or 2.0-flash if speed is priority.
-# User requested "newest", currently 1.5 Pro (latest) is very strong.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro-latest")
+# Default is set in docker-compose, typically gemini-2.0-flash or gemini-1.5-pro
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Configure GenAI
 if GEMINI_API_KEY:

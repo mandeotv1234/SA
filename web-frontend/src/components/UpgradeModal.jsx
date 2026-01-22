@@ -1,0 +1,256 @@
+import React, { useState, useEffect } from 'react';
+import { X, Copy, Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
+import useStore from '../store';
+
+const MY_BANK = {
+    BANK_ID: "MBBank",
+    ACCOUNT_NO: "0398103087",
+    ACCOUNT_NAME: "HUỲNH MẪN",
+    TEMPLATE: "compact",
+};
+
+const PAYMENT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+const POLL_INTERVAL = 3000; // 3 seconds
+
+export default function UpgradeModal({ onClose }) {
+    const { token, isVip, setIsVip } = useStore();
+    const [step, setStep] = useState(1);
+    const [userId, setUserId] = useState(null);
+    const [loadingCode, setLoadingCode] = useState(true);
+    const [paymentStatus, setPaymentStatus] = useState('idle'); // idle, waiting, success, failed, expired
+    const [timeRemaining, setTimeRemaining] = useState(PAYMENT_TIMEOUT);
+
+    useEffect(() => {
+        // Decode token to get user ID
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            setUserId(payload.sub);
+            setLoadingCode(false);
+        } catch (e) {
+            console.error("Failed to decode token", e);
+            setLoadingCode(false);
+        }
+    }, [token]);
+
+    // Countdown timer
+    useEffect(() => {
+        if (paymentStatus === 'waiting' && timeRemaining > 0) {
+            const timer = setTimeout(() => {
+                setTimeRemaining(prev => prev - 1000);
+            }, 1000);
+            return () => clearTimeout(timer);
+        } else if (paymentStatus === 'waiting' && timeRemaining <= 0) {
+            setPaymentStatus('expired');
+        }
+    }, [paymentStatus, timeRemaining]);
+
+    // Poll VIP status from auth service
+    useEffect(() => {
+        if (paymentStatus !== 'waiting') return;
+
+        const checkVipStatus = async () => {
+            try {
+                const res = await fetch('http://localhost:8000/auth/me', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    console.log('VIP status check:', data);
+                    if (data.user && data.user.is_vip) {
+                        console.log('User is now VIP! Updating state...');
+                        setPaymentStatus('success');
+                        setIsVip(true);
+                        // Close modal and let the UI update naturally
+                        setTimeout(() => {
+                            onClose();
+                        }, 2000);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to check VIP status:', error);
+            }
+        };
+
+        const interval = setInterval(checkVipStatus, POLL_INTERVAL);
+        return () => clearInterval(interval);
+    }, [paymentStatus, token, setIsVip, onClose]);
+
+    const copyToClipboard = (text) => {
+        navigator.clipboard.writeText(text);
+        alert('Copied to clipboard!');
+    };
+
+    const formatTime = (ms) => {
+        const minutes = Math.floor(ms / 60000);
+        const seconds = Math.floor((ms % 60000) / 1000);
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    };
+
+    const handlePaymentClick = () => {
+        setPaymentStatus('waiting');
+        setTimeRemaining(PAYMENT_TIMEOUT);
+    };
+
+    return (
+        <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000
+        }}>
+            <div style={{
+                backgroundColor: '#1e222d', padding: 24, borderRadius: 12, width: '400px',
+                color: 'white', position: 'relative', border: '1px solid #2a2e39'
+            }}>
+                <button onClick={onClose} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
+                    <X size={20} />
+                </button>
+
+                <h2 style={{ fontSize: 20, marginBottom: 16, textAlign: 'center' }}>Upgrade to VIP</h2>
+
+                {step === 1 && (
+                    <div>
+                        <p style={{ color: '#9ca3af', marginBottom: 24, textAlign: 'center' }}>
+                            Unlock exclusive AI insights and real-time predictions.
+                        </p>
+
+                        <div style={{ backgroundColor: '#2a2e39', padding: 16, borderRadius: 8, marginBottom: 24 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <span style={{ color: '#9ca3af' }}>Price</span>
+                                <span style={{ fontWeight: 'bold', color: '#26a69a' }}>10,000 VNĐ</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ color: '#9ca3af' }}>Plan</span>
+                                <span style={{ fontWeight: 'bold' }}>Lifetime Access</span>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => setStep(2)}
+                            className="login-btn"
+                            style={{ width: '100%', padding: 12, borderRadius: 4, cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                        >
+                            Continue to Payment
+                        </button>
+                    </div>
+                )}
+
+                {step === 2 && paymentStatus === 'idle' && (
+                    <div>
+                        {loadingCode ? <div style={{ textAlign: 'center' }}><Loader className="spin" /></div> : (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16, textAlign: 'center' }}>
+                                    Scan QR code to pay instantly
+                                </p>
+
+                                <div style={{ backgroundColor: 'white', padding: 12, borderRadius: 8, marginBottom: 16 }}>
+                                    <img
+                                        src={`https://img.vietqr.io/image/${MY_BANK.BANK_ID}-${MY_BANK.ACCOUNT_NO}-${MY_BANK.TEMPLATE}.png?amount=10000&addInfo=VIP%20${userId}&accountName=${encodeURIComponent(MY_BANK.ACCOUNT_NAME)}`}
+                                        alt="Payment QR Code"
+                                        style={{ width: '200px', height: 'auto' }}
+                                    />
+                                </div>
+
+                                <div style={{ width: '100%', marginBottom: 16, fontSize: 13, color: '#e5e7eb' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
+                                        <span style={{ color: '#9ca3af' }}>Bank</span>
+                                        <span style={{ fontWeight: 'bold' }}>MB Bank</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
+                                        <span style={{ color: '#9ca3af' }}>Account Name</span>
+                                        <span style={{ fontWeight: 'bold' }}>{MY_BANK.ACCOUNT_NAME}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
+                                        <span style={{ color: '#9ca3af' }}>Account No.</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>{MY_BANK.ACCOUNT_NO}</span>
+                                            <button onClick={() => copyToClipboard(MY_BANK.ACCOUNT_NO)} style={{ background: 'none', border: 'none', color: '#26a69a', cursor: 'pointer', padding: 0 }}>
+                                                <Copy size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
+                                        <span style={{ color: '#9ca3af' }}>Amount</span>
+                                        <span style={{ fontWeight: 'bold', color: '#26a69a' }}>10,000 VNĐ</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: '#9ca3af' }}>Content</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <span style={{ fontWeight: 'bold', color: '#f23645' }}>VIP {userId}</span>
+                                            <button onClick={() => copyToClipboard(`VIP ${userId}`)} style={{ background: 'none', border: 'none', color: '#26a69a', cursor: 'pointer', padding: 0 }}>
+                                                <Copy size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={handlePaymentClick}
+                                    style={{
+                                        width: '100%', padding: 12, borderRadius: 4, cursor: 'pointer',
+                                        backgroundColor: '#26a69a', color: 'white', border: 'none', fontWeight: 'bold'
+                                    }}
+                                >
+                                    I have made the transfer
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {paymentStatus === 'waiting' && (
+                    <div style={{ textAlign: 'center', padding: 20 }}>
+                        <Loader className="spin" size={48} style={{ margin: '0 auto 16px', color: '#26a69a' }} />
+                        <h3 style={{ marginBottom: 8 }}>Checking payment...</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#9ca3af', marginBottom: 16 }}>
+                            <Clock size={16} />
+                            <span>Time remaining: {formatTime(timeRemaining)}</span>
+                        </div>
+                        <p style={{ fontSize: 13, color: '#9ca3af' }}>
+                            Please wait while we confirm your payment. This may take a few moments.
+                        </p>
+                    </div>
+                )}
+
+                {paymentStatus === 'success' && (
+                    <div style={{ textAlign: 'center', padding: 20 }}>
+                        <CheckCircle size={64} style={{ margin: '0 auto 16px', color: '#26a69a' }} />
+                        <h3 style={{ color: '#26a69a', marginBottom: 8 }}>Payment Successful!</h3>
+                        <p style={{ fontSize: 13, color: '#9ca3af' }}>
+                            Your account has been upgraded to VIP. Refreshing...
+                        </p>
+                    </div>
+                )}
+
+                {(paymentStatus === 'failed' || paymentStatus === 'expired') && (
+                    <div style={{ textAlign: 'center', padding: 20 }}>
+                        <XCircle size={64} style={{ margin: '0 auto 16px', color: '#f23645' }} />
+                        <h3 style={{ color: '#f23645', marginBottom: 8 }}>
+                            {paymentStatus === 'expired' ? 'Payment Expired' : 'Payment Failed'}
+                        </h3>
+                        <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16 }}>
+                            {paymentStatus === 'expired'
+                                ? 'The payment window has expired. Please try again.'
+                                : 'Unable to process your payment. Please try again.'}
+                        </p>
+                        <button
+                            onClick={() => {
+                                setPaymentStatus('idle');
+                                setStep(1);
+                                setTimeRemaining(PAYMENT_TIMEOUT);
+                            }}
+                            style={{
+                                padding: '8px 16px', borderRadius: 4, cursor: 'pointer',
+                                backgroundColor: '#26a69a', color: 'white', border: 'none', fontWeight: 'bold'
+                            }}
+                        >
+                            Try Again
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

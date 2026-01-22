@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 from collections import deque
 
 from app.kafka_producer import produce_ai_insight
-from app.modules.gemini_client import generate_market_prediction
+from app.modules.ollama_client import OllamaClient
+
+ollama_client = OllamaClient()
 
 LOG = logging.getLogger("ai.aggregator")
 
@@ -99,9 +101,9 @@ def run_scheduled_prediction() -> Dict:
     print(f"[INFO] Analyzing {len(news_list)} articles for {len(ALL_SYMBOLS)} symbols")
     print(f"{'='*60}")
     
-    # Generate prediction using Gemini for ALL symbols
-    print(f"[GEMINI] Generating prediction for {len(ALL_SYMBOLS)} symbols...")
-    prediction = generate_market_prediction(
+    # Generate prediction using Ollama for ALL symbols
+    print(f"[OLLAMA] Generating prediction for {len(ALL_SYMBOLS)} symbols...")
+    prediction = ollama_client.generate_market_prediction(
         news_summaries=news_list,
         symbols=ALL_SYMBOLS
     )

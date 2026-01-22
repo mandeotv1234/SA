@@ -14,6 +14,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 1
+      KAFKA_LOG_RETENTION_BYTES: 268435456
+      KAFKA_LOG_SEGMENT_BYTES: 134217728
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
     ports:
       - "9092:9092"
     healthcheck:
@@ -114,6 +118,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   core-service:
     build:
@@ -138,6 +147,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   stream-service:
     build:
@@ -156,6 +170,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   crawler-service:
     build:
@@ -179,6 +198,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   ai-service:
     build:
@@ -189,9 +213,9 @@ services:
       NEWS_ANALYZED_TOPIC: news_analyzed
       KAFKA_GROUP: ai-service-group-v4
       AI_INSIGHTS_TOPIC: ai_insights
-      # Gemini configuration
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
-      GEMINI_MODEL: "gemini-1.5-pro-latest"
+      # Ollama configuration
+      OLLAMA_API_URL: "https://e4cc3ef23639.ngrok-free.app"
+      OLLAMA_MODEL: "llama3.2"
       # Scheduled prediction settings
       PREDICTION_INTERVAL_SEC: "300" # 5 minutes
       MAX_NEWS_BUFFER: "100"
@@ -204,6 +228,56 @@ services:
       retries: 6
     ports:
       - "8002:8002"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      PORT: 3000
+      SEPAY_API_KEY: "${SEPAY_API_KEY}"
+      DATABASE_URL: postgresql://payment_user:payment_password@payment-db:5432/payment_db
+    ports:
+      - "8004:3000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      payment-db:
+        condition: service_healthy
+    volumes:
+      - ./services/payment-service:/app
+      - /app/node_modules
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  payment-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: payment_user
+      POSTGRES_PASSWORD: payment_password
+      POSTGRES_DB: payment_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - payment_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U payment_user -d payment_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
@@ -211,4 +285,6 @@ volumes:
   tsdata:
     driver: local
   redisdata:
+    driver: local
+  payment_pgdata:
     driver: local

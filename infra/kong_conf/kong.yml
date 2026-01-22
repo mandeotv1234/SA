@@ -3,12 +3,23 @@ _transform: true
 
 # SỬA Ở ĐÂY: Dùng "services" thay vì "_services"
 services:
-  - name: auth-service
+  - name: auth-service-public
     url: "http://auth-service:8080"
     routes:
-      - name: auth-route
-        paths: ["/auth"]
+      - name: auth-public-route
+        paths: ["/auth/login", "/auth/register", "/auth/public-key"]
         strip_path: false
+
+  - name: auth-service-protected
+    url: "http://auth-service:8080"
+    routes:
+      - name: auth-protected-route
+        paths: ["/auth/me"]
+        strip_path: false
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
 
   - name: core-service
     url: "http://core-service:3000"

@@ -52,6 +52,11 @@ const useStore = create((set, get) => ({
     set({ currentSymbol: symbol, price: null });
   },
 
+  setIsVip: (isVip) => {
+    localStorage.setItem('isVip', String(isVip));
+    set({ isVip: !!isVip });
+  },
+
   connectSocket: () => {
     const { token, socket, supportedSymbols } = get();
     if (socket && socket.connected) return;

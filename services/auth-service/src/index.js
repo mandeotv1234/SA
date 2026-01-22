@@ -20,9 +20,16 @@ app.get('/profile', authMiddleware, async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ alive: true }));
 
+const startPaymentConsumer = require('./consumers/PaymentSuccessConsumer');
+
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Auth Service listening on ${PORT}`);
+
+    // Start Kafka Consumer
+    startPaymentConsumer().catch(err => {
+      console.error('Failed to start PaymentSuccessConsumer', err);
+    });
   });
 }).catch(err => {
   console.error('DB init failed', err);
