@@ -172,8 +172,11 @@ services:
       AI_INSIGHTS_TOPIC: ai_insights
       MARKET_CONSUMER_GROUP_ID: core-service-market-consumer
       NEWS_CONSUMER_GROUP_ID: core-service-news-consumer
+      REDIS_URL: redis://redis:6379  # For token blacklist defense-in-depth
     depends_on:
       timescaledb:
+        condition: service_started
+      redis:
         condition: service_started
     # SECURITY: No port exposure - only accessible via Kong Gateway
     # ports:

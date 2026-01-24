@@ -174,7 +174,8 @@ const useStore = create((set, get) => ({
     const res = await fetch(`${AUTH_BASE}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, is_vip: isVip })
+      body: JSON.stringify({ email, password, is_vip: isVip }),
+      credentials: 'include' // Enable cookie sending/receiving
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -187,7 +188,8 @@ const useStore = create((set, get) => ({
     const res = await fetch(`${AUTH_BASE}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password }),
+      credentials: 'include' // Enable cookie sending/receiving
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -206,12 +208,56 @@ const useStore = create((set, get) => ({
     get().connectSocket();
   },
 
-  logout: () => {
+  logout: async () => {
+    const { token } = get();
+    
+    // Call backend logout to revoke tokens
+    if (token) {
+      try {
+        await fetch(`${AUTH_BASE}/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include' // Send httpOnly cookie
+        });
+      } catch (e) {
+        console.error('Logout request failed:', e);
+      }
+    }
+    
     localStorage.removeItem('token');
     localStorage.removeItem('isVip');
     const { socket } = get();
     if (socket) socket.disconnect();
     set({ token: null, isVip: false, socket: null, user: null });
+  },
+
+  // Silent refresh: Get new access token using refresh token cookie
+  refreshAccessToken: async () => {
+    try {
+      const res = await fetch(`${AUTH_BASE}/refresh`, {
+        method: 'POST',
+        credentials: 'include' // Send httpOnly refresh token cookie
+      });
+      
+      if (!res.ok) {
+        // Refresh token expired or invalid
+        return null;
+      }
+      
+      const data = await res.json();
+      if (data.token) {
+        // Update stored token
+        localStorage.setItem('token', data.token);
+        const user = get().decodeUser(data.token);
+        set({ token: data.token, user });
+        return data.token;
+      }
+      
+      return null;
+    } catch (e) {
+      console.error('Token refresh failed:', e);
+      return null;
+    }
   },
 
   authFetch: async (endpoint, options = {}) => {
@@ -231,7 +277,30 @@ const useStore = create((set, get) => ({
       ...(options.headers || {}),
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    return fetch(url, { ...options, headers });
+    
+    // Make the initial request
+    let response = await fetch(url, { ...options, headers });
+    
+    // If 401 and not already a refresh/logout request, try silent refresh
+    if (response.status === 401 && !endpoint.includes('/refresh') && !endpoint.includes('/logout') && !endpoint.includes('/login')) {
+      console.log('Access token expired, attempting silent refresh...');
+      
+      const newToken = await get().refreshAccessToken();
+      
+      if (newToken) {
+        // Retry the original request with new token
+        headers['Authorization'] = `Bearer ${newToken}`;
+        response = await fetch(url, { ...options, headers });
+        console.log('Request retried with refreshed token');
+      } else {
+        // Refresh failed, logout user
+        console.log('Silent refresh failed, logging out...');
+        await get().logout();
+        throw new Error('Session expired, please login again');
+      }
+    }
+    
+    return response;
   }
 }));
 

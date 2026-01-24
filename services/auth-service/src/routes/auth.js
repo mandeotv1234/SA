@@ -82,9 +82,9 @@ router.post('/login', async (req, res) => {
     res.cookie('refresh_token', refreshTokenData.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production', // HTTPS only in production
-      sameSite: 'strict',
+      sameSite: 'lax', // Changed from 'strict' to 'lax' for better cross-origin support
       maxAge: refreshTokenDays * 24 * 60 * 60 * 1000, // Days to milliseconds
-      path: '/auth' // Only send cookie to /auth endpoints
+      path: '/' // Available for all paths
     });
     
     res.json({ 
@@ -199,9 +199,9 @@ router.post('/refresh', async (req, res) => {
     res.cookie('refresh_token', newRefreshTokenData.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'lax', // Changed from 'strict' to 'lax' for better cross-origin support
       maxAge: refreshTokenDays * 24 * 60 * 60 * 1000, // Days to milliseconds
-      path: '/auth'
+      path: '/' // Available for all paths
     });
     
     // Log token refresh
@@ -262,7 +262,7 @@ router.post('/logout', authMiddleware, async (req, res) => {
       await RefreshToken.revokeRefreshToken(refreshToken, 'user_logout');
       
       // Clear refresh token cookie
-      res.clearCookie('refresh_token', { path: '/auth' });
+      res.clearCookie('refresh_token', { path: '/' });
     }
     
     res.json({ 
