@@ -125,13 +125,15 @@ services:
   auth-service:
     build:
       context: ./services/auth-service
+    env_file:
+      - ./services/auth-service/.env  # Business logic configs (JWT, etc.)
     environment:
+      # Infrastructure configs (DB, Kafka, Redis)
       DATABASE_URL: postgresql://dev:dev@postgres:5432/appdb
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: dev
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_EXPIRY: 900  # 15 minutes (900 seconds) for access tokens
       KAFKA_BROKERS: kafka:9092
     depends_on:
       postgres:

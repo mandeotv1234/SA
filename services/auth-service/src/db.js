@@ -90,6 +90,36 @@ async function initDB() {
     `);
     console.log("Users table columns:", cols.rows.map(r => r.column_name).join(', '));
     console.log("   → users schema migration/verification complete");
+
+    // Phase 2: Create refresh_tokens table
+    console.log("📦 Ensuring refresh_tokens table exists...");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(255) NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_used_at TIMESTAMP,
+        ip_address INET,
+        user_agent TEXT,
+        is_revoked BOOLEAN DEFAULT FALSE,
+        revoked_at TIMESTAMP,
+        revoked_reason TEXT
+      );
+    `);
+    console.log("   → refresh_tokens table ensured");
+
+    // Add indexes for refresh_tokens
+    const refreshTokenIndexes = [
+      `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);`,
+      `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);`
+    ];
+    for (const idx of refreshTokenIndexes) {
+      try { await client.query(idx); } catch (e) { /* ignore if exists */ }
+    }
+    console.log("   → refresh_tokens indexes ensured");
   } catch (err) {
     console.error("❌ Error in initDB:", err);
     throw err;

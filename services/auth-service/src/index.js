@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const authRoutes = require('./routes/auth');
 const authMiddleware = require('./middleware/auth');
 const { initDB } = require('./db');
@@ -9,6 +10,7 @@ const PORT = process.env.PORT || 8080;
 
 const app = express();
 app.use(express.json());
+app.use(cookieParser()); // Phase 2: Parse cookies for refresh tokens
 
 // public auth routes
 app.use('/auth', authRoutes);
