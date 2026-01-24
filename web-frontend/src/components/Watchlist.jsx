@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import useStore from '../store';
-import { Search, ChevronDown } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { io } from 'socket.io-client';
 
 const TIMEFRAMES = [
@@ -14,11 +14,52 @@ const TIMEFRAMES = [
 ];
 
 export default function Watchlist() {
-    const { token, supportedSymbols, currentSymbol, setSymbol } = useStore();
+    const { token, supportedSymbols, currentSymbol, setSymbol, authFetch } = useStore();
     const [search, setSearch] = useState('');
     const [selectedTimeframe, setSelectedTimeframe] = useState('1m');
-    const [priceSnapshot, setPriceSnapshot] = useState({});
+    const [oldPrices, setOldPrices] = useState({}); // Giá X thời gian trước
     const [currentPrices, setCurrentPrices] = useState({});
+
+    // Fetch old prices when timeframe changes
+    useEffect(() => {
+        if (!token || supportedSymbols.length === 0) return;
+
+        const fetchOldPrices = async () => {
+            const timeframe = TIMEFRAMES.find(tf => tf.value === selectedTimeframe);
+            if (!timeframe) return;
+
+            const now = Math.floor(Date.now() / 1000);
+            const oldTime = now - timeframe.seconds;
+
+            const prices = {};
+            
+            // Fetch old price for each symbol
+            for (const symbol of supportedSymbols) {
+                try {
+                    const url = `/v1/klines?symbol=${symbol}&limit=1&interval=1m&end=${oldTime}`;
+                    const res = await authFetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.length > 0) {
+                            prices[symbol] = parseFloat(data[0].close);
+                        }
+                    }
+                } catch (e) {
+                    console.error(`[Watchlist] Failed to fetch old price for ${symbol}:`, e);
+                }
+            }
+
+            setOldPrices(prices);
+            console.log(`[Watchlist] Fetched old prices for ${selectedTimeframe}:`, prices);
+        };
+
+        fetchOldPrices();
+
+        // Refresh old prices every minute
+        const interval = setInterval(fetchOldPrices, 60000);
+
+        return () => clearInterval(interval);
+    }, [selectedTimeframe, token, supportedSymbols, authFetch]);
 
     // WebSocket connection for real-time prices
     useEffect(() => {
@@ -47,6 +88,7 @@ export default function Watchlist() {
                 const symbol = msg.symbol.toUpperCase();
                 const price = parseFloat(msg.kline.c || msg.kline.close);
                 
+                // Update current price
                 setCurrentPrices(prev => ({
                     ...prev,
                     [symbol]: price
@@ -65,29 +107,6 @@ export default function Watchlist() {
             socket.disconnect();
         };
     }, [token, supportedSymbols]);
-
-    // Take price snapshot based on selected timeframe for % calculation
-    useEffect(() => {
-        const timeframe = TIMEFRAMES.find(tf => tf.value === selectedTimeframe);
-        const intervalMs = timeframe ? timeframe.seconds * 1000 : 60000;
-
-        const takeSnapshot = () => {
-            if (Object.keys(currentPrices).length > 0) {
-                setPriceSnapshot({ ...currentPrices });
-                console.log(`[Watchlist] Price snapshot taken (${selectedTimeframe}):`, currentPrices);
-            }
-        };
-
-        // Take snapshot immediately if we have prices
-        if (Object.keys(currentPrices).length > 0 && Object.keys(priceSnapshot).length === 0) {
-            takeSnapshot();
-        }
-
-        // Then at the selected interval
-        const interval = setInterval(takeSnapshot, intervalMs);
-
-        return () => clearInterval(interval);
-    }, [currentPrices, priceSnapshot, selectedTimeframe]);
 
     const filtered = supportedSymbols.filter(s => s.includes(search.toUpperCase()));
 
@@ -109,11 +128,7 @@ export default function Watchlist() {
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>% Thay đổi:</span>
                 <select
                     value={selectedTimeframe}
-                    onChange={e => {
-                        setSelectedTimeframe(e.target.value);
-                        // Reset snapshot when changing timeframe
-                        setPriceSnapshot({});
-                    }}
+                    onChange={e => setSelectedTimeframe(e.target.value)}
                     style={{
                         background: 'var(--bg-secondary)',
                         border: '1px solid var(--border-color)',
@@ -141,7 +156,7 @@ export default function Watchlist() {
             <div style={{ flex: 1, overflowY: 'auto' }}>
                 {filtered.map(symbol => {
                     const currentPrice = currentPrices[symbol];
-                    const oldPrice = priceSnapshot[symbol];
+                    const oldPrice = oldPrices[symbol];
                     
                     // Calculate % change
                     let change = null;
@@ -191,7 +206,7 @@ export default function Watchlist() {
                                         </div>
                                     ) : (
                                         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                                            0.00%
+                                            --
                                         </div>
                                     )}
                                 </div>
