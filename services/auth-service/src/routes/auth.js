@@ -1,7 +1,10 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
-const { signToken, getPublicKeyPem } = require('../utils/jwt');
+const { signToken, getPublicKeyPem, verifyToken } = require('../utils/jwt');
+const TokenBlacklist = require('../services/TokenBlacklist');
+const AuditLogger = require('../utils/AuditLogger');
+const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
 router.use(express.json());
@@ -36,13 +39,25 @@ router.post('/login', async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
 
   const normEmail = String(email).trim().toLowerCase();
+  const ipAddress = req.ip || req.connection.remoteAddress;
+  const userAgent = req.headers['user-agent'] || 'unknown';
 
   try {
     const r = await pool.query('SELECT id, email, password, is_vip FROM users WHERE lower(email) = lower($1) LIMIT 1', [normEmail]);
     const row = r.rows[0];
-    if (!row) return res.status(401).json({ error: 'invalid_credentials' });
+    
+    if (!row) {
+      // Log failed authentication attempt
+      AuditLogger.logAuthAttempt(null, normEmail, ipAddress, userAgent, false, 'user_not_found');
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+    
     const ok = await bcrypt.compare(password, row.password);
-    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    if (!ok) {
+      // Log failed authentication attempt
+      AuditLogger.logAuthAttempt(row.id, normEmail, ipAddress, userAgent, false, 'invalid_password');
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
 
     // Include is_vip in the token
     const token = signToken({
@@ -50,10 +65,57 @@ router.post('/login', async (req, res) => {
       email: row.email,
       is_vip: !!row.is_vip
     });
+    
+    // Log successful authentication
+    AuditLogger.logAuthAttempt(row.id, row.email, ipAddress, userAgent, true);
+    
     res.json({ token, is_vip: !!row.is_vip });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Logout - revoke current token
+router.post('/logout', authMiddleware, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    if (!user.jti) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Token does not contain JTI',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+    
+    // Calculate TTL based on token expiration
+    const now = Math.floor(Date.now() / 1000);
+    const ttl = user.exp - now;
+    
+    if (ttl > 0) {
+      // Add token to blacklist
+      await TokenBlacklist.addToBlacklist(user.jti, ttl);
+      
+      // Log token revocation
+      AuditLogger.logTokenRevocation(user.jti, user.sub, 'user_logout');
+    }
+    
+    res.json({ 
+      message: 'Logged out successfully',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to logout',
+        timestamp: new Date().toISOString()
+      }
+    });
   }
 });
 
@@ -62,49 +124,34 @@ router.get('/public-key', (req, res) => {
 });
 
 // Get current user info (requires JWT)
-router.get('/me', async (req, res) => {
+router.get('/me', authMiddleware, async (req, res) => {
   try {
-    // Kong JWT plugin adds the JWT payload to headers
-    // We need to decode the Authorization header to get the actual user ID
-    const authHeader = req.headers.authorization;
+    // authMiddleware already validated token and checked blacklist
+    // req.user contains the decoded JWT payload
+    const userId = req.user.sub;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
-
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-
-    // Decode JWT payload (middle part of token)
-    try {
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-      const userId = payload.sub; // 'sub' contains user ID
-
-      if (!userId) {
-        return res.status(401).json({ error: 'invalid_token' });
-      }
-
-      const r = await pool.query('SELECT id, email, is_vip, created_at FROM users WHERE id = $1 LIMIT 1', [userId]);
-      const user = r.rows[0];
-
-      if (!user) {
-        return res.status(404).json({ error: 'user_not_found' });
-      }
-
-      // Issue a new token with updated claims
-      const newToken = signToken({
-        sub: user.id,
-        email: user.email,
-        is_vip: !!user.is_vip
-      });
-
-      res.json({
-        user: { id: user.id, email: user.email, is_vip: !!user.is_vip, created_at: user.created_at },
-        token: newToken // Return fresh token
-      });
-    } catch (decodeError) {
-      console.error('JWT decode error:', decodeError);
+    if (!userId) {
       return res.status(401).json({ error: 'invalid_token' });
     }
+
+    const r = await pool.query('SELECT id, email, is_vip, created_at FROM users WHERE id = $1 LIMIT 1', [userId]);
+    const user = r.rows[0];
+
+    if (!user) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    // Issue a new token with updated claims
+    const newToken = signToken({
+      sub: user.id,
+      email: user.email,
+      is_vip: !!user.is_vip
+    });
+
+    res.json({
+      user: { id: user.id, email: user.email, is_vip: !!user.is_vip, created_at: user.created_at },
+      token: newToken // Return fresh token
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'db_error' });

@@ -3,6 +3,7 @@ const express = require('express');
 const authRoutes = require('./routes/auth');
 const authMiddleware = require('./middleware/auth');
 const { initDB } = require('./db');
+const { getRedisClient } = require('./config/redis');
 
 const PORT = process.env.PORT || 8080;
 
@@ -22,7 +23,13 @@ app.get('/health', (req, res) => res.json({ alive: true }));
 
 const startPaymentConsumer = require('./consumers/PaymentSuccessConsumer');
 
-initDB().then(() => {
+// Initialize Redis and DB
+Promise.all([
+  initDB(),
+  getRedisClient()
+]).then(() => {
+  console.log('✓ Database and Redis connected');
+  
   app.listen(PORT, () => {
     console.log(`Auth Service listening on ${PORT}`);
 
@@ -32,6 +39,6 @@ initDB().then(() => {
     });
   });
 }).catch(err => {
-  console.error('DB init failed', err);
+  console.error('Service initialization failed:', err);
   process.exit(1);
 });
