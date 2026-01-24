@@ -49,17 +49,27 @@ async function start() {
   }
 
   io.on('connection', (socket) => {
+    console.log(`[CONNECTION] New client connected: ${socket.id}`);
+
     // Optional monitoring log
     const clientsCount = io.engine.clientsCount;
-    if (clientsCount % 100 === 0) {
-      console.log(`Monitor: ${clientsCount} clients connected`);
+    if (clientsCount % 100 === 0 || clientsCount < 10) {
+      console.log(`[MONITOR] Total clients connected: ${clientsCount}`);
     }
 
     // Client subscribes to a specific symbol (Price Feed)
     socket.on('subscribe', (symbol) => {
+      console.log(`[SUBSCRIBE] Received subscribe event from ${socket.id} for: ${symbol}`);
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
         socket.join(room);
+        console.log(`[SUBSCRIBE] ✅ Client ${socket.id} joined room: ${room}`);
+
+        // Log current room members
+        const roomSize = io.sockets.adapter.rooms.get(room)?.size || 0;
+        console.log(`[SUBSCRIBE] Room ${room} now has ${roomSize} client(s)`);
+      } else {
+        console.log(`[SUBSCRIBE] ❌ Invalid symbol received: ${symbol}`);
       }
     });
 
@@ -67,6 +77,7 @@ async function start() {
     socket.on('join_user_room', (userId) => {
       if (userId && typeof userId === 'string') {
         socket.join(`user_${userId}`);
+        console.log(`[USER_ROOM] Client ${socket.id} joined user room: user_${userId}`);
       }
     });
 
@@ -74,7 +85,12 @@ async function start() {
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
         socket.leave(room);
+        console.log(`[UNSUBSCRIBE] Client ${socket.id} left room: ${room}`);
       }
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log(`[DISCONNECT] Client ${socket.id} disconnected. Reason: ${reason}`);
     });
   });
 

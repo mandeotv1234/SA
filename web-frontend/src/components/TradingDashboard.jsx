@@ -9,7 +9,6 @@ const TIMEFRAMES = [
     { label: '1 Ngày', value: '1d', api: '1d' },
     { label: '1 Tuần', value: '1w', api: '1w' },
     { label: '1 Tháng', value: '1M', api: '1M' },
-    { label: '1 Năm', value: '1y', api: '1y' },
 ];
 
 const SYMBOLS = [

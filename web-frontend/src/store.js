@@ -82,81 +82,17 @@ const useStore = create((set, get) => ({
 
   // call init on create
   connectSocket: () => {
-    // Ensure user is set
+    // DISABLED: Each chart now manages its own Socket.IO connection
+    // This global socket was for the old Chart component
+    console.log('[Store] Global socket connection disabled - charts manage their own connections');
+
+    // Still decode user if needed
     if (!get().user && get().token) {
       set({ user: get().decodeUser(get().token) });
     }
 
-    const { token, socket, supportedSymbols } = get();
-    // ... existing connectSocket code ...
-
-    let url = WS_BASE;
-    if (!/^https?:\/\//.test(url)) url = window.location.origin.replace(/\/$/, '');
-    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-
-    const newSocket = io(`${url}${qs}`, {
-      path: '/socket.io',
-      transports: ['websocket'],
-      reconnectionDelay: 1000,
-    });
-
-    newSocket.on('connect', () => {
-      supportedSymbols.forEach(s => newSocket.emit('subscribe', s));
-
-      // Join user room for notifications
-      if (token) {
-        try {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          if (payload && payload.sub) {
-            console.log('Joining user room:', payload.sub);
-            newSocket.emit('join_user_room', payload.sub);
-          }
-        } catch (e) {
-          console.error('Failed to decode token for socket join', e);
-        }
-      }
-    });
-
-    newSocket.on('vip_update', async (data) => {
-      console.log('Received VIP update:', data);
-      if (data.isVip) {
-        try {
-          // Fetch fresh token with VIP claim
-          const res = await get().authFetch('/auth/me');
-          if (res.ok) {
-            const responseData = await res.json();
-            if (responseData.token) {
-              console.log('Token refreshed with VIP status');
-              localStorage.setItem('token', responseData.token);
-              localStorage.setItem('isVip', 'true');
-              set({ token: responseData.token, isVip: true });
-            }
-          }
-        } catch (e) {
-          console.error('Failed to refresh VIP token', e);
-        }
-
-        get().setIsVip(true);
-      }
-    });
-
-    newSocket.on('price_event', (msg) => {
-      const n = normalizeIncoming(msg);
-      if (!n) return;
-
-      const sym = msg.symbol.toUpperCase();
-      const change = ((n.c - n.o) / n.o) * 100;
-
-      set(state => ({
-        marketState: {
-          ...state.marketState,
-          [sym]: { price: n.c, change: change }
-        },
-        price: sym === state.currentSymbol ? n : state.price
-      }));
-    });
-
-    set({ socket: newSocket });
+    // Don't create socket connection anymore
+    // MultiTimeframeChart components handle their own Socket.IO connections
   },
 
   register: async (email, password, isVip) => {

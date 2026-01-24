@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart } from 'lightweight-charts';
 import useStore from '../store';
+import { io } from 'socket.io-client';
 
 export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     const chartContainerRef = useRef();
     const chartRef = useRef();
     const candleSeriesRef = useRef();
     const volumeSeriesRef = useRef();
-    const wsRef = useRef(null);
+    const socketRef = useRef(null);
     const loadingRef = useRef(false);
     const oldestTimeRef = useRef(null);
+    const latestTimeRef = useRef(null); // Track latest timestamp for realtime updates
 
     const { authFetch } = useStore();
     const [data, setData] = useState([]);
@@ -80,7 +82,9 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         window.addEventListener('resize', handleResize);
         return () => {
             window.removeEventListener('resize', handleResize);
-            if (wsRef.current) wsRef.current.close();
+            if (socketRef.current) {
+                socketRef.current.disconnect();
+            }
             chart.remove();
         };
     }, [chartId]);
@@ -149,6 +153,7 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     useEffect(() => {
         setData([]);
         oldestTimeRef.current = null;
+        latestTimeRef.current = null; // Reset latest time
         loadHistory(null);
     }, [symbol, timeframe]);
 
@@ -166,51 +171,117 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             if (oldestTimeRef.current === null || data[0].time < oldestTimeRef.current) {
                 oldestTimeRef.current = data[0].time;
             }
+
+            // Update latest time for realtime updates
+            latestTimeRef.current = data[data.length - 1].time;
         }
     }, [data]);
 
-    // WebSocket for Realtime Updates (only for 1m timeframe)
+    // Socket.IO for Realtime Updates (all timeframes)
     useEffect(() => {
-        if (timeframe !== '1m') return; // Chỉ realtime cho 1m
+        if (socketRef.current) {
+            socketRef.current.disconnect();
+        }
 
-        if (wsRef.current) wsRef.current.close();
+        // Get token from store
+        const token = useStore.getState().token;
+        if (!token) {
+            console.warn(`[${chartId}] No token available, skipping Socket.IO connection`);
+            return;
+        }
 
-        const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${timeframe}`);
+        // Connect to Socket.IO gateway via Kong with JWT token
+        const socket = io('http://localhost:8000', {
+            path: '/stream-api/socket.io',
+            transports: ['websocket'],
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: 10,
+            query: {
+                token: token  // Send JWT token for Kong authentication
+            }
+        });
 
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            if (msg.k) {
-                const kline = msg.k;
-                const t = Math.floor(kline.t / 1000);
+        socket.on('connect', () => {
+            console.log(`[${chartId}] ✅ Socket.IO connected! Socket ID: ${socket.id}`);
+            console.log(`[${chartId}] Current symbol: ${symbol}, timeframe: ${timeframe}`);
+
+            // Subscribe to interval-specific room
+            // IMPORTANT: Server uppercases the entire room name, so we need to match that
+            const room = `${symbol}_${timeframe}`.toUpperCase();
+            console.log(`[${chartId}] 📡 Emitting 'subscribe' event for room: ${room}`);
+            socket.emit('subscribe', room);
+
+            // Verify subscription after a short delay
+            setTimeout(() => {
+                console.log(`[${chartId}] ✓ Subscription should be complete for room: ${room}`);
+            }, 500);
+        });
+
+        socket.on('price_event', (payload) => {
+            console.log(`[${chartId}] Received price_event:`, payload);
+
+            // payload format: { symbol: 'BTCUSDT', interval: '1m' or '1M', kline: {...} }
+            // Normalize intervals to uppercase for comparison (1m vs 1M)
+            const payloadInterval = (payload.interval || '').toUpperCase();
+            const expectedInterval = timeframe.toUpperCase();
+
+            if (payload.symbol === symbol && payloadInterval === expectedInterval && payload.kline) {
+                const kline = payload.kline;
+                const t = Math.floor(kline.openTime / 1000);
+
+                // Only update if this is newer or equal to the latest data we have
+                // This prevents "Cannot update oldest data" error from backfill data
+                if (latestTimeRef.current !== null && t < latestTimeRef.current) {
+                    console.log(`[${chartId}] Skipping old kline: ${t} < ${latestTimeRef.current} (backfill data)`);
+                    return;
+                }
+
+                console.log(`[${chartId}] Updating chart with kline at time ${t}`);
 
                 const candle = {
                     time: t,
-                    open: parseFloat(kline.o),
-                    high: parseFloat(kline.h),
-                    low: parseFloat(kline.l),
-                    close: parseFloat(kline.c),
+                    open: parseFloat(kline.open),
+                    high: parseFloat(kline.high),
+                    low: parseFloat(kline.low),
+                    close: parseFloat(kline.close),
                 };
 
                 const volume = {
                     time: t,
-                    value: parseFloat(kline.v),
-                    color: parseFloat(kline.c) >= parseFloat(kline.o)
+                    value: parseFloat(kline.volume),
+                    color: parseFloat(kline.close) >= parseFloat(kline.open)
                         ? 'rgba(8, 153, 129, 0.5)'
                         : 'rgba(242, 54, 69, 0.5)'
                 };
 
                 if (candleSeriesRef.current && volumeSeriesRef.current) {
-                    candleSeriesRef.current.update(candle);
-                    volumeSeriesRef.current.update(volume);
+                    try {
+                        candleSeriesRef.current.update(candle);
+                        volumeSeriesRef.current.update(volume);
+                    } catch (error) {
+                        console.error(`[${chartId}] Error updating chart:`, error);
+                    }
                 }
+            } else {
+                console.log(`[${chartId}] Ignoring price_event - symbol: ${payload.symbol}, interval: ${payloadInterval}, expected: ${symbol}_${expectedInterval}`);
             }
-        };
+        });
 
-        ws.onerror = (err) => console.error(`[${chartId}] WebSocket error:`, err);
-        wsRef.current = ws;
+        socket.on('disconnect', () => {
+            console.log(`[${chartId}] Socket.IO disconnected`);
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error(`[${chartId}] Socket.IO connection error:`, err);
+        });
+
+        socketRef.current = socket;
 
         return () => {
-            if (wsRef.current) wsRef.current.close();
+            if (socketRef.current) {
+                socketRef.current.disconnect();
+            }
         };
     }, [symbol, timeframe, chartId]);
 

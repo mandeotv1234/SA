@@ -44,8 +44,21 @@ const initConsumer = async (io) => {
 
                     // Handle Market Price Events from Ingester
                     if (topic === 'market.prices') {
+                        // payload format: { symbol: 'BTCUSDT', interval: '1m', kline: {...} }
                         const symbolRoom = payload.symbol.toUpperCase();
-                        io.to(symbolRoom).volatile.emit('price_event', payload);
+                        const interval = (payload.interval || '1m').toUpperCase(); // Normalize to uppercase
+
+                        // Emit to both symbol-specific and interval-specific rooms
+                        // Room format: "BTCUSDT_1M", "BTCUSDT_5M", etc.
+                        const intervalRoom = `${symbolRoom}_${interval}`;
+
+                        console.log(`[KAFKA] Broadcasting to room: ${intervalRoom}, clients in room: ${io.sockets.adapter.rooms.get(intervalRoom)?.size || 0}`);
+                        io.to(intervalRoom).volatile.emit('price_event', payload);
+
+                        // Also emit to general symbol room for backward compatibility
+                        if (interval === '1M') { // Changed from '1m' to '1M'
+                            io.to(symbolRoom).volatile.emit('price_event', payload);
+                        }
                     }
 
                 } catch (err) {

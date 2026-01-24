@@ -27,6 +27,9 @@ services:
       - name: socketio-route
         paths: ["/socket.io"]
         strip_path: false
+      - name: stream-api-route
+        paths: ["/stream-api"]
+        strip_path: true
     plugins:
       - name: jwt
         config:
