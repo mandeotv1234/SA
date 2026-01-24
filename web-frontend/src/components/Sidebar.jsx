@@ -3,7 +3,8 @@ import useStore from '../store';
 import NewsList from './NewsList';
 import InsightsList from './InsightsList';
 import Watchlist from './Watchlist';
-import { Newspaper, BrainCircuit, Lock, List } from 'lucide-react';
+import InvestmentSimulator from './InvestmentSimulator';
+import { Newspaper, BrainCircuit, Lock, List, TrendingUp } from 'lucide-react';
 
 import UpgradeModal from './UpgradeModal';
 
@@ -37,6 +38,13 @@ export default function Sidebar() {
                 >
                     <BrainCircuit size={16} />
                 </button>
+                <button
+                    onClick={() => setActiveTab('investment')}
+                    className={`tab-btn ${activeTab === 'investment' ? 'active' : ''}`}
+                    title="Investment Simulator"
+                >
+                    <TrendingUp size={16} />
+                </button>
             </div>
 
             {/* Content */}
@@ -53,6 +61,7 @@ export default function Sidebar() {
                         </div>
                     )
                 )}
+                {activeTab === 'investment' && <InvestmentSimulator />}
             </div>
 
             {showUpgradeModal && <UpgradeModal onClose={() => setShowUpgradeModal(false)} />}

@@ -53,7 +53,8 @@ export default function InsightsList() {
     };
 
     const getSentimentBadge = (sentiment) => {
-        switch (sentiment?.toUpperCase()) {
+        const sentimentStr = String(sentiment || '').toUpperCase();
+        switch (sentimentStr) {
             case 'BULLISH':
                 return <span className="sentiment-badge bullish">🚀 Lạc quan</span>;
             case 'BEARISH':
@@ -110,6 +111,12 @@ export default function InsightsList() {
                         {currentSymbolPred.reason && (
                             <div className="pred-reason">{currentSymbolPred.reason}</div>
                         )}
+                        {currentSymbolPred.causal_factor && (
+                            <div className="pred-reason" style={{ color: '#aaa', fontStyle: 'italic', marginTop: '4px' }}>
+                                <Zap size={10} style={{ display: 'inline', marginRight: '4px' }} />
+                                Nguyên nhân: {currentSymbolPred.causal_factor}
+                            </div>
+                        )}
                         <div className="pred-confidence">
                             Độ tin cậy: {(currentSymbolPred.confidence * 100)?.toFixed(0)}%
                         </div>
@@ -126,12 +133,19 @@ export default function InsightsList() {
                                 key={idx}
                                 className={`pred-mini-card ${isActive ? 'active' : ''}`}
                                 style={{ borderColor: style.color }}
+                                title={pred.reason || pred.causal_factor} // Tooltip
                             >
                                 <div className="symbol">{pred.symbol?.replace('USDT', '')}</div>
                                 <div className="direction" style={{ color: style.color }}>
                                     {style.icon}
-                                    <span>{pred.change_percent > 0 ? '+' : ''}{pred.change_percent?.toFixed(1)}%</span>
+                                    <span>{pred.change_percent > 0 ? '+' : ''}{Number(pred.change_percent).toFixed(1)}%</span>
                                 </div>
+                                {/* Show mini reason if available */}
+                                {(pred.reason || pred.causal_factor) && (
+                                    <div className="mini-reason">
+                                        {pred.causal_factor ? `Causal: ${pred.causal_factor}` : pred.reason}
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
@@ -396,6 +410,18 @@ export default function InsightsList() {
                     gap: 4px;
                     font-size: 11px;
                     font-weight: bold;
+                }
+
+                .mini-reason {
+                    font-size: 9px;
+                    color: #999;
+                    margin-top: 4px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 100%;
+                    padding-top: 4px;
+                    border-top: 1px solid rgba(255,255,255,0.05);
                 }
                 
                 .key-factors {

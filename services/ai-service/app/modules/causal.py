@@ -58,7 +58,7 @@ def run_causal_now():
 from apscheduler.schedulers.background import BackgroundScheduler
 
 def schedule_causal_job():
-    interval_minutes = int(os.getenv("CAUSAL_INTERVAL_MIN", "60"))
+    interval_minutes = int(os.getenv("CAUSAL_INTERVAL_MIN", "5"))
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_causal_now, 'interval', minutes=interval_minutes, id="causal_job", replace_existing=True)
     scheduler.start()

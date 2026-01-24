@@ -15,13 +15,19 @@ from collections import deque
 from app.kafka_producer import produce_ai_insight
 from app.modules.ollama_client import OllamaClient
 
-ollama_client = OllamaClient()
+
+from app.modules.inference import InferenceEngine
+
+# Initialize Inference Engine
+# Ensure model path is correct or allow fallback
+MODEL_PATH = os.getenv("MODEL_PATH", "/app/models/lstm_sentiment_hybrid_v1.pth")
+_inference_engine = InferenceEngine(model_path=MODEL_PATH, device=os.getenv("DEVICE", "cpu"))
 
 LOG = logging.getLogger("ai.aggregator")
 
 # Configuration
-MAX_NEWS_BUFFER = int(os.getenv("MAX_NEWS_BUFFER", "100"))
-PREDICTION_INTERVAL_SEC = int(os.getenv("PREDICTION_INTERVAL_SEC", "300"))  # 5 minutes
+MAX_NEWS_BUFFER = int(os.getenv("MAX_NEWS_BUFFER", "500"))
+PREDICTION_INTERVAL_SEC = int(os.getenv("PREDICTION_INTERVAL_SEC", "300")) 
 
 # All trading pairs to predict
 ALL_SYMBOLS = [
@@ -39,7 +45,6 @@ _last_prediction_time: float = 0
 
 def add_news(news_payload: Dict) -> bool:
     """Add news to buffer. Returns True if this is new news."""
-    # Handle both flat and nested structures
     url = news_payload.get("url")
     if not url:
         raw = news_payload.get("raw", {})
@@ -49,6 +54,10 @@ def add_news(news_payload: Dict) -> bool:
     
     if not url:
         return False
+
+    title = news_payload.get("title", "")
+    if "Google News" in title or not title:
+        return False
     
     with _buffer_lock:
         if url in _seen_urls:
@@ -56,7 +65,6 @@ def add_news(news_payload: Dict) -> bool:
         
         _seen_urls.add(url)
         
-        # Get data from flat structure first, fallback to nested
         article = {
             "url": url,
             "title": news_payload.get("title", ""),
@@ -76,117 +84,90 @@ def add_news(news_payload: Dict) -> bool:
 
 def run_scheduled_prediction() -> Dict:
     """
-    Run prediction on all buffered news.
-    Called by scheduler every 5 minutes.
-    Predicts for ALL trading pairs.
+    Run Deep Learning prediction on buffered news and market data.
     """
     global _last_prediction_time
     
     with _buffer_lock:
-        if not _news_buffer:
-            print("[PREDICTION] No news in buffer, skipping...")
-            return {"status": "no_news"}
-        
-        # Get all news but DON'T clear - keep for context
+        # Get all news
         news_list = list(_news_buffer)
-        # Clear old news (older than 1 hour)
-        cutoff = time.time() - 3600
+        
+        # Cleanup old news
+        cutoff = time.time() - 86400 # 24h
         while _news_buffer and _news_buffer[0].get("timestamp", 0) < cutoff:
             _news_buffer.popleft()
     
     _last_prediction_time = time.time()
     
     print(f"\n{'='*60}")
-    print(f"[SCHEDULED PREDICTION] {datetime.now().strftime('%H:%M:%S')}")
+    print(f"[DEEP LEARNING PREDICTION] {datetime.now().strftime('%H:%M:%S')}")
     print(f"[INFO] Analyzing {len(news_list)} articles for {len(ALL_SYMBOLS)} symbols")
     print(f"{'='*60}")
     
-    # Generate prediction using Ollama for ALL symbols
-    print(f"[OLLAMA] Generating prediction for {len(ALL_SYMBOLS)} symbols...")
-    prediction = ollama_client.generate_market_prediction(
-        news_summaries=news_list,
-        symbols=ALL_SYMBOLS
-    )
+    predictions = []
     
-    if prediction.get("error"):
-        print(f"[ERROR] Prediction failed: {prediction.get('error')}")
-        return prediction
-    
-    # Add metadata
-    prediction["type"] = "aggregated_prediction"
-    prediction["analyzed_articles"] = len(news_list)
-    prediction["symbols_analyzed"] = ALL_SYMBOLS
-    prediction["scheduled"] = True
-    
-    # Log results
-    preds = prediction.get("predictions", [])
-    print(f"\n[RESULTS] Market Sentiment: {prediction.get('market_sentiment', 'N/A')}")
-    print(f"[SUMMARY] {prediction.get('analysis_summary', 'N/A')[:100]}")
-    print(f"\n[PREDICTIONS]")
-    for p in preds:
-        direction = p.get('direction', '?')
-        change = p.get('change_percent', 0)
-        symbol = p.get('symbol', '?')
-        reason = p.get('reason', '')[:60]
-        icon = '🚀' if direction == 'UP' else '📉' if direction == 'DOWN' else '➖'
-        print(f"  {icon} {symbol}: {direction} ({change:+.1f}%) - {reason}")
-    
-    # Key factors and risks
-    if prediction.get('key_factors'):
-        print(f"\n[KEY FACTORS] {', '.join(prediction['key_factors'][:3])}")
-    if prediction.get('risks'):
-        print(f"[RISKS] {', '.join(prediction['risks'][:2])}")
-    
-    print(f"{'='*60}\n")
-    
+    for symbol in ALL_SYMBOLS:
+        print(f"  [LOOP-DEBUG] Processing {symbol}...")
+        try:
+            # Run Deep Learning Inference
+            pred = _inference_engine.predict_for_symbol(symbol, news_list)
+            
+            if pred:
+                predictions.append(pred)
+                icon = '🚀' if pred['direction'] == 'UP' else '📉'
+                print(f"  {icon} {symbol}: {pred['direction']} (Conf: {pred['confidence']:.2f})")
+                print(f"     Reason: {pred['reason']}")
+            else:
+                print(f"  [WARN] Skipping {symbol} - insufficient data")
+                
+        except Exception as e:
+            print(f"  [ERROR] Failed for {symbol}: {e}")
+
+    # Construct final result
+    result_payload = {
+        "type": "aggregated_prediction",
+        "analyzed_articles": len(news_list),
+        "symbols_analyzed": ALL_SYMBOLS,
+        "market_sentiment": "NEUTRAL",  # Can derive from avg predictions
+        "analysis_summary": f"Deep Learning analysis of {len(news_list)} news items and market trends.",
+        "predictions": predictions,
+        "timestamp": time.time()
+    }
+
     # Publish to Kafka
     try:
-        produce_ai_insight(prediction)
+        produce_ai_insight(result_payload)
         print(f"[KAFKA] Published aggregated_prediction")
     except Exception as e:
         print(f"[KAFKA ERROR] {e}")
     
-    return prediction
+    return result_payload
 
 
 def _scheduler_loop():
     """Background scheduler that runs prediction every PREDICTION_INTERVAL_SEC."""
     global _scheduler_running
     
-    print(f"[SCHEDULER] Started - prediction every {PREDICTION_INTERVAL_SEC}s ({PREDICTION_INTERVAL_SEC//60} mins)")
+    print(f"[SCHEDULER] Started - DL prediction every {PREDICTION_INTERVAL_SEC}s")
     print(f"[SCHEDULER] First run in 30 seconds...")
     
-    # Wait 30s for initial data collection
     time.sleep(30)
     
     while _scheduler_running:
         try:
-            with _buffer_lock:
-                buffer_size = len(_news_buffer)
-            
-            if buffer_size > 0:
-                print(f"[SCHEDULER] Running prediction with {buffer_size} articles...")
-                run_scheduled_prediction()
-            else:
-                print(f"[SCHEDULER] No articles in buffer, skipping...")
-                
+            # Always run prediction even if buffer is empty (Technical Analysis fallback)
+            run_scheduled_prediction()
         except Exception as e:
             print(f"[SCHEDULER ERROR] {e}")
             import traceback
             traceback.print_exc()
         
-        # Wait for next interval
         time.sleep(PREDICTION_INTERVAL_SEC)
 
 
 def start_scheduler():
-    """Start the background prediction scheduler."""
     global _scheduler_running
-    
-    if _scheduler_running:
-        print("[SCHEDULER] Already running")
-        return
-    
+    if _scheduler_running: return
     _scheduler_running = True
     thread = threading.Thread(target=_scheduler_loop, daemon=True)
     thread.start()
@@ -194,19 +175,13 @@ def start_scheduler():
 
 
 def stop_scheduler():
-    """Stop the scheduler."""
     global _scheduler_running
     _scheduler_running = False
     print("[SCHEDULER] Stopped")
 
 
 def process_news(news_payload: Dict) -> Dict:
-    """
-    Process incoming news - just add to buffer.
-    Prediction runs on schedule, not per-article.
-    """
     is_new = add_news(news_payload)
-    
     if not is_new:
         title = news_payload.get("title", "")[:40]
         return {"status": "duplicate", "title": title}
@@ -214,33 +189,25 @@ def process_news(news_payload: Dict) -> Dict:
     with _buffer_lock:
         buffer_size = len(_news_buffer)
     
-    return {
-        "status": "buffered",
-        "buffer_size": buffer_size
-    }
+    return {"status": "buffered", "buffer_size": buffer_size}
 
 
 def get_buffer_status() -> Dict:
-    """Get current buffer status."""
     global _last_prediction_time
-    
     with _buffer_lock:
         return {
             "buffer_size": len(_news_buffer),
             "seen_urls": len(_seen_urls),
             "last_prediction": datetime.fromtimestamp(_last_prediction_time, timezone.utc).isoformat() if _last_prediction_time else None,
             "next_prediction_in": max(0, PREDICTION_INTERVAL_SEC - (time.time() - _last_prediction_time)),
-            "scheduler_running": _scheduler_running
+            "scheduler_running": _scheduler_running,
+            "engine": "Deep Learning (Dual-Stream)"
         }
 
-
 def force_prediction() -> Dict:
-    """Force run prediction immediately."""
     return run_scheduled_prediction()
 
-
 def reset_buffer():
-    """Reset buffer and seen URLs."""
     global _seen_urls
     with _buffer_lock:
         _news_buffer.clear()

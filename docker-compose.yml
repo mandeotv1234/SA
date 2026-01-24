@@ -183,11 +183,16 @@ services:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379/0
       NEWS_RAW_TOPIC: news_raw
+      OLLAMA_API_URL: ${OLLAMA_API_URL}
+      MONGO_URL: "mongodb://mongo-crawler:27017"
+      MONGO_DB: "crawler_db"
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       CRAWL_SOURCES: >-
         https://cointelegraph.com/rss, https://cryptonews.com/news/feed/, https://decrypt.co/feed, https://bitcoinmagazine.com/.rss/full/, https://theblock.co/rss.xml, https://www.coindesk.com/arc/outboundfeeds/rss/, https://coin68.com/, https://blogtienao.com/, https://coinphoton.com/, https://tienthuattoan.com/, https://vietnambiz.vn/bitcoin.htm, https://cafef.vn/tai-chinh-ngan-hang.chn, https://vneconomy.vn/tag/bitcoin, https://thitruongtaichinhtiente.vn/bitcoin-ptag.html
     depends_on:
       redis:
+        condition: service_started
+      mongo-crawler:
         condition: service_started
     ports:
       - "8003:8001"
@@ -204,6 +209,19 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  mongo-crawler:
+    image: mongo:6.0
+    container_name: mongo-crawler
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_crawler_data:/data/db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   ai-service:
     build:
       context: ./services/ai-service
@@ -211,16 +229,25 @@ services:
       KAFKA_BROKERS: kafka:9092
       NEWS_RAW_TOPIC: news_raw
       NEWS_ANALYZED_TOPIC: news_analyzed
-      KAFKA_GROUP: ai-service-group-v4
+      KAFKA_GROUP: ai-service-group-dl-v1
       AI_INSIGHTS_TOPIC: ai_insights
+      MARKET_DATA_TOPIC: market_data
+
+      # Deep Learning Config
+      MODEL_PATH: "/app/models/lstm_sentiment_hybrid_v1.pth"
+      DEVICE: "cpu" # Docker on macOS cannot access GPU directly yet. Use 'cpu'.
+      TIMEFRAME: "5m"
+
       # Ollama configuration
-      OLLAMA_API_URL: "https://e4cc3ef23639.ngrok-free.app"
+      OLLAMA_API_URL: ${OLLAMA_API_URL}
       OLLAMA_MODEL: "llama3.2"
-      # Scheduled prediction settings
-      PREDICTION_INTERVAL_SEC: "300" # 5 minutes
-      MAX_NEWS_BUFFER: "100"
+
+      # Settings
+      PREDICTION_INTERVAL_SEC: "60"
+      MAX_NEWS_BUFFER: "5000"
     volumes:
       - ./services/ai-service:/app
+      - ./ml_models:/app/models
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8002/health || exit 1" ]
       interval: 10s
@@ -279,6 +306,57 @@ services:
       timeout: 5s
       retries: 5
 
+  investment-service:
+    build:
+      context: ./services/investment-service
+    container_name: investment-service
+    environment:
+      POSTGRES_HOST: investment-db
+      POSTGRES_DB: investment_db
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      PORT: 8001
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      investment-db:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8006:8001"
+    volumes:
+      - ./services/investment-service:/app
+      - /app/node_modules
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  investment-db:
+    image: postgres:15-alpine
+    container_name: investment-db
+    environment:
+      POSTGRES_DB: investment_db
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+    ports:
+      - "5436:5432"
+    volumes:
+      - investment_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U dev -d investment_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
     driver: local
@@ -287,4 +365,8 @@ volumes:
   redisdata:
     driver: local
   payment_pgdata:
+    driver: local
+  mongo_crawler_data:
+    driver: local
+  investment_pgdata:
     driver: local

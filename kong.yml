@@ -37,6 +37,18 @@ _services:
           # Cho phép đọc token từ query param ?token=... (cần thiết cho Websocket handshake)
           uri_param_names: ["token"] 
 
+  # Investment Service: Bảo vệ bằng JWT
+  - name: investment-service
+    url: "http://investment-service:8001"
+    routes:
+      - name: investment-route
+        paths: ["/invest-api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+
 # 2. Định nghĩa Consumer chứa Public Key (Đây là chỗ cấu hình Key đúng)
 consumers:
   - username: shared-auth-consumer
@@ -56,7 +68,7 @@ consumers:
           -----END PUBLIC KEY-----
 
 # 3. Global Plugins
-_plugins:
+plugins:
   - name: cors
     config:
       # KHÔNG ĐƯỢC DÙNG "*" nếu credentials: true. Hãy điền domain frontend của bạn.

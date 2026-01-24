@@ -1,0 +1,172 @@
+[
+    {
+        "url": "https://cointelegraph.com/rss",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://cryptopotato.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://newsbtc.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://u.today/rss",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://cryptoslate.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://dailyhodl.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://zycrypto.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://ambcrypto.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://beincrypto.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://bitcoinist.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://www.newsbtc.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://cryptobriefing.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://blockworks.co/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://protos.com/feed/",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://decrypt.co/feed",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://thedefiant.io/feed",
+        "type": "rss",
+        "category": "Crypto"
+    },
+    {
+        "url": "https://techcrunch.com/category/cryptocurrency/feed/",
+        "type": "rss",
+        "category": "Tech"
+    },
+    {
+        "url": "https://www.forbes.com/crypto-blockchain/feed/",
+        "type": "rss",
+        "category": "Finance"
+    },
+    {
+        "url": "https://www.cnbc.com/id/10000664/device/rss/",
+        "type": "rss",
+        "category": "Finance"
+    },
+    {
+        "url": "https://www.marketwatch.com/rss/topstories",
+        "type": "rss",
+        "category": "Finance"
+    },
+    {
+        "url": "https://tapchibitcoin.io/feed",
+        "type": "rss",
+        "category": "Vietnam"
+    },
+    {
+        "url": "https://toiyeubitcoin.com/feed/",
+        "type": "rss",
+        "category": "Vietnam"
+    },
+    {
+        "url": "https://wikibinance.com/feed/",
+        "type": "rss",
+        "category": "Vietnam"
+    },
+    {
+        "url": "https://coin68.com/feed/",
+        "type": "rss",
+        "category": "Vietnam"
+    },
+    {
+        "url": "https://marginatm.com/feed",
+        "type": "rss",
+        "category": "Vietnam"
+    },
+    {
+        "url": "https://ndh.vn/",
+        "type": "html",
+        "category": "VietnamFinance"
+    },
+    {
+        "url": "https://diendandoanhnghiep.vn/",
+        "type": "html",
+        "category": "VietnamFinance"
+    },
+    {
+        "url": "https://baodautu.vn/tai-chinh-ngan-hang.html",
+        "type": "html",
+        "category": "VietnamFinance"
+    },
+    {
+        "url": "https://taichinhdoanhnghiep.net.vn/",
+        "type": "html",
+        "category": "VietnamFinance"
+    },
+    {
+        "url": "https://kinhtechungkhoan.vn/",
+        "type": "html",
+        "category": "VietnamFinance"
+    },
+    {
+        "url": "https://news.google.com/rss/search?q=bitcoin+when:1d&hl=en-US&gl=US&ceid=US:en",
+        "type": "rss",
+        "category": "Aggregator"
+    },
+    {
+        "url": "https://news.google.com/rss/search?q=cryptocurrency+when:1d&hl=en-US&gl=US&ceid=US:en",
+        "type": "rss",
+        "category": "Aggregator"
+    },
+    {
+        "url": "https://news.google.com/rss/search?q=tien+ao+when:1d&hl=vi-VN&gl=VN&ceid=VN:vi",
+        "type": "rss",
+        "category": "Aggregator"
+    },
+    {
+        "url": "https://news.google.com/rss/search?q=bitcoin+when:1d&hl=vi-VN&gl=VN&ceid=VN:vi",
+        "type": "rss",
+        "category": "Aggregator"
+    }
+]

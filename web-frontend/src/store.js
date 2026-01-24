@@ -42,7 +42,30 @@ function normalizeIncoming(msg) {
 const useStore = create((set, get) => ({
   token: localStorage.getItem('token') || null,
   isVip: localStorage.getItem('isVip') === 'true',
+  user: null, // Add user state
   currentSymbol: 'BTCUSDT',
+
+  // Helper to decode token
+  decodeUser: (token) => {
+    try {
+      if (!token) return null;
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return { id: payload.sub, email: payload.sub, role: payload.role };
+    } catch (e) {
+      console.error('Failed to decode token', e);
+      return null;
+    }
+  },
+
+  // Init user from stored token
+  init: () => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      const user = get().decodeUser(token);
+      set({ user });
+    }
+  },
+
   price: null,
   socket: null,
   marketState: {},
@@ -57,9 +80,15 @@ const useStore = create((set, get) => ({
     set({ isVip: !!isVip });
   },
 
+  // call init on create
   connectSocket: () => {
+    // Ensure user is set
+    if (!get().user && get().token) {
+      set({ user: get().decodeUser(get().token) });
+    }
+
     const { token, socket, supportedSymbols } = get();
-    if (socket && socket.connected) return;
+    // ... existing connectSocket code ...
 
     let url = WS_BASE;
     if (!/^https?:\/\//.test(url)) url = window.location.origin.replace(/\/$/, '');
@@ -158,7 +187,8 @@ const useStore = create((set, get) => ({
     localStorage.setItem('token', data.token);
     localStorage.setItem('isVip', String(data.is_vip));
 
-    set({ token: data.token, isVip: !!data.is_vip });
+    const user = get().decodeUser(data.token);
+    set({ token: data.token, isVip: !!data.is_vip, user });
 
     const { socket } = get();
     if (socket) socket.disconnect();
@@ -170,7 +200,7 @@ const useStore = create((set, get) => ({
     localStorage.removeItem('isVip');
     const { socket } = get();
     if (socket) socket.disconnect();
-    set({ token: null, isVip: false, socket: null });
+    set({ token: null, isVip: false, socket: null, user: null });
   },
 
   authFetch: async (endpoint, options = {}) => {
@@ -179,6 +209,8 @@ const useStore = create((set, get) => ({
     if (!endpoint.startsWith('http')) {
       if (endpoint.startsWith('/auth')) {
         url = `${GATEWAY}${endpoint}`;
+      } else if (endpoint.startsWith('/v1/investments')) {
+        url = `${GATEWAY}/invest-api${endpoint}`;
       } else {
         url = `${API_BASE}${endpoint}`;
       }

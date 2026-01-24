@@ -53,38 +53,53 @@ def _start_consumer():
                 # primary symbol
                 sym = j.get('symbol') or j.get('s')
 
+                # extract full OHLCV
+                open_p = None
+                high_p = None
+                low_p = None
+                vol = None
+                
                 # if kline nested
                 k = j.get('kline') or j.get('k') or j.get('kline')
                 if isinstance(k, dict):
-                    # prefer closeTime, then openTime
                     t = k.get('closeTime') or k.get('close_time') or k.get('openTime') or k.get('open_time') or k.get('t') or k.get('T')
                     close = k.get('close') or k.get('c')
+                    open_p = k.get('open') or k.get('o')
+                    high_p = k.get('high') or k.get('h')
+                    low_p = k.get('low') or k.get('l')
+                    vol = k.get('volume') or k.get('v')
                 else:
-                    # top-level fields
                     t = j.get('time') or j.get('ts') or j.get('open_time') or j.get('t')
                     close = j.get('close') or j.get('c') or j.get('price')
+                    open_p = j.get('open') or j.get('o') or close # fallback to close
+                    high_p = j.get('high') or j.get('h') or close
+                    low_p = j.get('low') or j.get('l') or close
+                    vol = j.get('volume') or j.get('v') or 0
 
                 # normalize numeric types and timestamps (ms -> s)
                 try:
                     if t is not None:
                         t = int(t)
-                        # if milliseconds, convert to seconds
-                        if t > 1_000_000_000_000:
-                            t = int(t / 1000)
+                        if t > 1_000_000_000_000: t = int(t / 1000)
+                        
+                    close = float(close) if close is not None else 0.0
+                    open_p = float(open_p) if open_p is not None else close
+                    high_p = float(high_p) if high_p is not None else close
+                    low_p = float(low_p) if low_p is not None else close
+                    vol = float(vol) if vol is not None else 0.0
                 except Exception:
-                    t = None
-                try:
-                    if close is not None:
-                        close = float(close)
-                except Exception:
-                    close = None
+                    continue
 
-                if sym and t and close is not None:
-                    try:
-                        _cache[sym].append((int(t), float(close)))
-                    except Exception:
-                        # skip malformed
-                        pass
+                if sym and t:
+                    _cache[sym].append({
+                        "time": int(t),
+                        "open": open_p, 
+                        "high": high_p, 
+                        "low": low_p, 
+                        "close": close, 
+                        "volume": vol
+                    })
+
             except Exception:
                 continue
     finally:
@@ -100,7 +115,7 @@ def start_market_cache_thread():
 
 
 def get_candles(symbol: str, limit: int):
-    """Return up to `limit` (time, close) tuples for given symbol, oldest->newest."""
+    """Return up to `limit` dicts (time, open, high, low, close, volume) for given symbol, oldest->newest."""
     deq = _cache.get(symbol)
     if not deq:
         return []

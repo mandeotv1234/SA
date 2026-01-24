@@ -25,7 +25,8 @@ class OllamaClient:
             payload = {
                 "model": self.model,
                 "prompt": prompt,
-                "stream": stream
+                "stream": stream,
+                "format": "json"  # Force JSON mode
             }
             
             response = requests.post(
@@ -78,54 +79,94 @@ class OllamaClient:
         if not news_summaries:
             return {"error": "no_news", "predictions": []}
         
-        # Build news summary
+        # Build news summary (using filtered list)
         news_text = ""
-        for i, news in enumerate(news_summaries[:20], 1):  # Limit to 20 articles
+        count = 0
+        for news in news_summaries:
             title = news.get("title", "")
+            if "Google News" in title: continue # Extra safety
+            
             sentiment = news.get("sentiment", "Neutral")
-            content = news.get("content", "")[:300]
-            news_text += f"{i}. [{sentiment}] {title}\n   {content}\n\n"
+            content = news.get("content", "")[:400] # Increase context slightly
+            count += 1
+            news_text += f"{count}. [{sentiment}] {title}\n   {content}\n\n"
+            if count >= 35: break
         
-        prompt = f"""You are a senior crypto market analyst. Analyze these {len(news_summaries)} news articles and predict short-term (24h) price movements for: {', '.join(symbols)}.
+        prompt = f"""Bạn là Chuyên gia Phân tích Tài chính Crypto. Phân tích {count} tin tức sau và dự đoán giá 24h tới cho TẤT CẢ 10 đồng coin.
 
-NEWS:
+TIN TỨC:
 {news_text}
 
-Provide predictions in JSON format:
+YÊU CẦU BẮT BUỘC:
+1. Phải dự đoán đầy đủ cho 10 coins: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, DOTUSDT, MATICUSDT
+2. Mỗi coin cần có:
+   - direction: "UP" hoặc "DOWN" hoặc "NEUTRAL"
+   - change_percent: số thực (ví dụ: 2.5 hoặc -1.8)
+   - confidence: số từ 0.0-1.0
+   - reason: Lý do CHI TIẾT bằng tiếng Việt (trích dẫn tin tức cụ thể)
+   - causal_factor: Nguyên nhân chính (ví dụ: "Fed giữ lãi suất", "ETF Bitcoin được duyệt")
+3. Nếu không có tin về coin nào, để NEUTRAL với reason "Không có tin tức liên quan"
+
+TRẢ VỀ JSON (KHÔNG KÈM TEXT):
 {{
-    "analysis_summary": "Brief market overview (2-3 sentences)",
-    "market_sentiment": "BULLISH|BEARISH|NEUTRAL",
-    "predictions": [
-        {{
-            "symbol": "BTCUSDT",
-            "direction": "UP|DOWN|NEUTRAL",
-            "change_percent": 2.5,
-            "confidence": 0.75,
-            "reason": "Brief explanation"
-        }}
-    ],
-    "key_factors": ["factor 1", "factor 2"],
-    "risks": ["risk 1", "risk 2"]
+  "analysis_summary": "Tóm tắt 2-3 câu về thị trường chung",
+  "market_sentiment": "BULLISH hoặc BEARISH hoặc NEUTRAL",
+  "predictions": [
+    {{"symbol": "BTCUSDT", "direction": "UP", "change_percent": 1.2, "confidence": 0.75, "reason": "Lý do cụ thể từ tin X", "causal_factor": "Sự kiện Y"}},
+    {{"symbol": "ETHUSDT", "direction": "DOWN", "change_percent": -0.8, "confidence": 0.6, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "BNBUSDT", "direction": "NEUTRAL", "change_percent": 0.0, "confidence": 0.5, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "SOLUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "XRPUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "DOGEUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "ADAUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "AVAXUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "DOTUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
+    {{"symbol": "MATICUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}}
+  ],
+  "key_factors": ["Yếu tố 1", "Yếu tố 2"],
+  "risks": ["Rủi ro 1"]
 }}
 
-IMPORTANT: Return ONLY valid JSON, no markdown or extra text."""
+QUAN TRỌNG: Phải có đủ 10 predictions, không được thiếu!"""
 
         result = self.generate(prompt)
         if result:
             response_text = self.extract_response(result)
+            
+            # Debug: log response length
+            print(f"[OLLAMA] Response length: {len(response_text)} chars")
+            
             try:
                 import re
-                # Extract JSON from response
+                # Extract JSON from response - try to find complete object
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
-                    parsed = json.loads(json_match.group())
+                    json_str = json_match.group()
+                    parsed = json.loads(json_str)
+                    
+                    # Validate predictions structure
+                    if "predictions" in parsed:
+                        valid_preds = []
+                        for pred in parsed["predictions"]:
+                            if isinstance(pred, dict) and "symbol" in pred:
+                                valid_preds.append(pred)
+                            else:
+                                print(f"[WARNING] Skipping invalid prediction: {pred}")
+                        parsed["predictions"] = valid_preds
+                        print(f"[OLLAMA] Validated {len(valid_preds)} predictions")
+                    
                     # Add metadata
                     parsed["timestamp"] = time.time()
-                    parsed["news_count"] = len(news_summaries)
+                    parsed["news_count"] = count
                     parsed["model"] = self.model
                     return parsed
+                else:
+                    print(f"[ERROR] No JSON found in response")
+                    print(f"Response preview: {response_text[:500]}")
             except json.JSONDecodeError as e:
-                print(f"Failed to parse JSON from Ollama response: {e}")
-                print(f"Response: {response_text[:500]}")
+                print(f"[ERROR] Failed to parse JSON: {e}")
+                print(f"Response preview: {response_text[:500]}")
+        else:
+            print(f"[ERROR] No result from Ollama API")
         
         return {"error": "prediction_failed", "predictions": []}
