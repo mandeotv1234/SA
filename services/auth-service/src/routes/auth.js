@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
-const { signToken, getPublicKeyPem, verifyToken } = require('../utils/jwt');
+const { signToken, getPublicKeyPem, verifyToken, getJWKS } = require('../utils/jwt');
 const TokenBlacklist = require('../services/TokenBlacklist');
 const RefreshToken = require('../services/RefreshToken');
 const AuditLogger = require('../utils/AuditLogger');
@@ -283,6 +283,25 @@ router.post('/logout', authMiddleware, async (req, res) => {
 
 router.get('/public-key', (req, res) => {
   res.type('text/plain').send(getPublicKeyPem());
+});
+
+// JWKS endpoint for Kong/external JWT validation (Phase 3 - Task 11.2)
+// Follows OpenID Connect Discovery specification
+// Kong can use this to automatically verify JWT signatures
+router.get('/.well-known/jwks.json', (req, res) => {
+  try {
+    const jwks = getJWKS();
+    res.json(jwks);
+  } catch (error) {
+    console.error('Error generating JWKS:', error);
+    res.status(500).json({
+      error: {
+        code: 'JWKS_GENERATION_ERROR',
+        message: 'Failed to generate JWKS',
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
 });
 
 // Get current user info (requires JWT)

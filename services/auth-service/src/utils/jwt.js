@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const { generateKeyPairSync } = require('crypto');
+const { generateKeyPairSync, createPublicKey } = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
 const KEYS_DIR = path.join(__dirname, '..', '..', 'keys');
@@ -63,4 +63,30 @@ function decodeToken(token) {
   return jwt.decode(token, { complete: true });
 }
 
-module.exports = { signToken, verifyToken, getPublicKeyPem, decodeToken };
+/**
+ * Get JWKS (JSON Web Key Set) for Kong/external JWT validation
+ * JWKS format allows JWT validators to automatically fetch and verify signatures
+ */
+function getJWKS() {
+  const publicKeyPem = fs.readFileSync(PUB_PATH, 'utf8');
+  
+  // Convert PEM to JWK (JSON Web Key)
+  const publicKey = createPublicKey(publicKeyPem);
+  const jwk = publicKey.export({ format: 'jwk' });
+  
+  // Add required JWKS fields
+  const jwks = {
+    keys: [{
+      kid: 'auth-service-key-1', // Key ID for key rotation
+      kty: jwk.kty, // Key type (RSA)
+      use: 'sig', // Public key use (signature)
+      alg: 'RS256', // Algorithm
+      n: jwk.n, // Modulus
+      e: jwk.e  // Exponent
+    }]
+  };
+  
+  return jwks;
+}
+
+module.exports = { signToken, verifyToken, getPublicKeyPem, decodeToken, getJWKS };

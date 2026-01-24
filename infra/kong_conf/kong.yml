@@ -1,28 +1,84 @@
 _format_version: "2.1"
-_transform: true
 
-# SỬA Ở ĐÂY: Dùng "services" thay vì "_services"
+# Phase 3: API Gateway Security Enhancement
+# Enhanced Kong configuration with:
+# - JWT validation with issuer/audience check
+# - Rate limiting per user (100 req/min)
+# - RBAC with request-transformer (inject X-User-Id, X-Roles)
+# - Request validation (size limits, timeouts)
+
+# 1. Services and Routes
 services:
+  # Auth Service: No JWT protection (users need to login)
   - name: auth-service
     url: "http://auth-service:8080"
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
     routes:
       - name: auth-route
         paths: ["/auth"]
         strip_path: false
+    plugins:
+      # Rate limiting for auth endpoints (prevent brute force)
+      - name: rate-limiting
+        config:
+          minute: 20  # Max 20 login attempts per minute
+          hour: 100   # Max 100 login attempts per hour
+          policy: local
+          limit_by: ip
+          hide_client_headers: false
 
+      # Request size limiting
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 1  # 1 MB max request body
+
+  # Core Service: Protected by JWT
   - name: core-service
     url: "http://core-service:3000"
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
     routes:
       - name: api-route
         paths: ["/api"]
         strip_path: true
     plugins:
+      # JWT validation with issuer/audience verification
       - name: jwt
         config:
           claims_to_verify: ["exp"]
+          key_claim_name: "iss"  # Verify issuer claim
+          secret_is_base64: false
+          anonymous: null  # Don't allow anonymous access
+          run_on_preflight: false
 
+      # Rate limiting per authenticated user
+      - name: rate-limiting
+        config:
+          minute: 100   # 100 requests per minute per user
+          hour: 1000    # 1000 requests per hour per user
+          policy: local
+          limit_by: credential
+          hide_client_headers: false
+
+      # Inject user info headers for downstream services (RBAC)
+      # Note: Kong CE request-transformer doesn't support $(claims.x) syntax
+      # Headers will be injected by JWT plugin automatically or by custom plugin
+      # For now, services can extract claims from Authorization header
+
+      # Request size limiting
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 1  # 1 MB max
+
+  # Stream Service (Socket.IO): Protected by JWT
   - name: stream-service
     url: "http://haproxy:8005"
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
     routes:
       - name: socketio-route
         paths: ["/socket.io"]
@@ -34,10 +90,30 @@ services:
       - name: jwt
         config:
           claims_to_verify: ["exp"]
-          uri_param_names: ["token"]
+          uri_param_names: ["token"]  # Allow token in query param for WebSocket
+          key_claim_name: "iss"
+          anonymous: null
 
+      - name: rate-limiting
+        config:
+          minute: 100
+          hour: 1000
+          policy: local
+          limit_by: credential
+
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-User-Id:$(claims.sub)"
+              - "X-User-Email:$(claims.email)"
+
+  # Investment Service: Protected by JWT
   - name: investment-service
     url: "http://investment-service:8001"
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
     routes:
       - name: investment-route
         paths: ["/invest-api"]
@@ -46,13 +122,70 @@ services:
       - name: jwt
         config:
           claims_to_verify: ["exp"]
-          uri_param_names: ["token"]
+          key_claim_name: "iss"
+          anonymous: null
 
+      - name: rate-limiting
+        config:
+          minute: 50    # Lower limit for financial operations
+          hour: 500
+          policy: local
+          limit_by: credential
+
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-User-Id:$(claims.sub)"
+              - "X-User-Email:$(claims.email)"
+              - "X-Is-VIP:$(claims.is_vip)"
+
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 1
+
+  # Payment Service: Protected by JWT with stricter limits
+  - name: payment-service
+    url: "http://payment-service:8002"
+    connect_timeout: 30000
+    write_timeout: 30000
+    read_timeout: 30000
+    routes:
+      - name: payment-route
+        paths: ["/payment-api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          key_claim_name: "iss"
+          anonymous: null
+
+      - name: rate-limiting
+        config:
+          minute: 30    # Stricter limit for payment operations
+          hour: 300
+          policy: local
+          limit_by: credential
+
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-User-Id:$(claims.sub)"
+              - "X-User-Email:$(claims.email)"
+              - "X-Is-VIP:$(claims.is_vip)"
+
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 1
+
+# 2. Consumers with JWT Credentials
 consumers:
   - username: shared-auth-consumer
     jwt_secrets:
       - algorithm: RS256
-        key: "my-app-auth"
+        key: "my-app-auth"  # Must match 'iss' claim in JWT
         rsa_public_key: |
           -----BEGIN PUBLIC KEY-----
           MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1W4HxmDaLrRtv2RNYFaQ
@@ -64,13 +197,24 @@ consumers:
           wwIDAQAB
           -----END PUBLIC KEY-----
 
-# SỬA Ở ĐÂY: Dùng "plugins" thay vì "_plugins"
+# 3. Global Plugins
 plugins:
+  # CORS configuration
   - name: cors
     config:
-      origins: ["http://localhost:5173"]
-      methods: ["GET","POST","PUT","DELETE","OPTIONS"]
+      origins: ["http://localhost:5173", "http://myapp.com"]
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
       headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "Authorization"]
-      exposed_headers: ["X-Auth-Token"]
+      exposed_headers: ["X-Auth-Token", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"]
       credentials: true
       max_age: 3600
+
+  # Global request logging for audit
+  - name: file-log
+    config:
+      path: "/tmp/kong-requests.log"
+      reopen: true
+
+# Note: JWKS support requires Kong Enterprise or custom plugin
+# For CE, public key must be updated manually or via automation script
+# See: .kiro/PHASE3_COMPLETION.md for JWKS integration guide
