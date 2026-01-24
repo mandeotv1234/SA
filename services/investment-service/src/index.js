@@ -28,9 +28,10 @@ const kafka = new Kafka({
 });
 
 const producer = kafka.producer();
-const consumer = kafka.consumer({ groupId: 'investment-service-group' });
+const consumer = kafka.consumer({ groupId: 'investment-service-group-v2' });
 
-// SSE Clients map initialization moved below
+// Pending requests map
+const pendingAnalysisRequests = new Map(); // requestId -> { resolve, reject, timeout }
 
 // Initialize database
 async function initDB() {
@@ -70,11 +71,13 @@ async function initDB() {
 // Get current price from stream service
 async function getCurrentPrice(symbol) {
     try {
-        const response = await axios.get(`http://stream-service:8001/api/price/${symbol}`);
-        return parseFloat(response.data.price);
+        const response = await axios.get(`http://core-service:3000/v1/klines?symbol=${symbol}&interval=1m&limit=1`);
+        if (response.data && response.data.length > 0) {
+            return parseFloat(response.data[0].close);
+        }
+        throw new Error('No price data found');
     } catch (error) {
         console.error(`[ERROR] Failed to get price for ${symbol}:`, error.message);
-        // Fallback: mock price
         return 50000 + Math.random() * 1000;
     }
 }
@@ -82,17 +85,31 @@ async function getCurrentPrice(symbol) {
 // Get latest AI prediction from Kafka topic
 let latestAIPrediction = null;
 
-async function consumeAIPredictions() {
+async function consumeKafkaTopics() {
     await consumer.connect();
-    await consumer.subscribe({ topic: 'ai_insights', fromBeginning: false });
+    // Subscribe to multiple topics
+    await consumer.subscribe({ topics: ['ai_insights', 'investment.analysis.result'], fromBeginning: true });
 
     await consumer.run({
         eachMessage: async ({ topic, partition, message }) => {
             try {
                 const payload = JSON.parse(message.value.toString());
-                if (payload.type === 'aggregated_prediction') {
-                    latestAIPrediction = payload;
-                    console.log('[KAFKA] Received AI prediction update');
+
+                if (topic === 'ai_insights') {
+                    if (payload.type === 'aggregated_prediction') {
+                        latestAIPrediction = payload;
+                        console.log('[KAFKA] Received AI prediction update');
+                    }
+                } else if (topic === 'investment.analysis.result') {
+                    // Handle analysis result
+                    const requestId = payload.requestId;
+                    if (requestId && pendingAnalysisRequests.has(requestId)) {
+                        const { resolve, timeout } = pendingAnalysisRequests.get(requestId);
+                        clearTimeout(timeout);
+                        pendingAnalysisRequests.delete(requestId);
+                        resolve(payload);
+                        console.log(`[KAFKA] Resolved analysis request ${requestId}`);
+                    }
                 }
             } catch (error) {
                 console.error('[KAFKA ERROR]', error);
@@ -101,44 +118,187 @@ async function consumeAIPredictions() {
     });
 }
 
+// Fetch latest prediction from Core Service (Warmup/Fallback)
+async function fetchLatestPredictionFromCore() {
+    try {
+        // Correct endpoint for core-service
+        const url = 'http://core-service:3000/v1/insights/internal?type=aggregated_prediction&limit=1';
+        const res = await axios.get(url);
+        if (res.data && res.data.rows && res.data.rows.length > 0) {
+            const row = res.data.rows[0];
+            if (row.payload && row.payload.predictions) {
+                latestAIPrediction = row.payload;
+                console.log('[WARMUP] Loaded latest prediction from Core Service');
+            }
+        }
+    } catch (e) {
+        console.error('[WARMUP ERROR] Failed to fetch from core-service:', e.message);
+    }
+}
+
 // Get AI prediction for specific symbol
-function getAIPredictionForSymbol(symbol) {
+async function getAIPredictionForSymbol(symbol) {
     if (!latestAIPrediction || !latestAIPrediction.predictions) {
-        return null;
+        await fetchLatestPredictionFromCore();
+        if (!latestAIPrediction || !latestAIPrediction.predictions) {
+            return null;
+        }
     }
 
     const pred = latestAIPrediction.predictions.find(p => p.symbol === symbol);
     return pred || null;
 }
 
-// POST /v1/investments - Create new investment simulation
-app.post('/v1/investments', async (req, res) => {
-    const { user_id, symbol, usdt_amount, target_sell_time } = req.body;
+// Helper: Perform Investment Analysis Logic
+async function analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time) {
+    const buyPrice = await getCurrentPrice(symbol);
+    const coinAmount = usdt_amount / buyPrice;
 
-    if (!user_id || !symbol || !usdt_amount || !target_sell_time) {
-        return res.status(400).json({ error: 'Missing required fields: user_id, symbol, usdt_amount, target_sell_time' });
+    // Get AI prediction context
+    const aiPred = await getAIPredictionForSymbol(symbol);
+    if (!aiPred) {
+        throw new Error('AI_PREDICTION_UNAVAILABLE');
+    }
+
+    // Call AI Service via Kafka (Async Request-Reply)
+    let aiAnalysis = null;
+    try {
+        const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const analysisPayload = {
+            requestId,
+            symbol,
+            amount: parseFloat(usdt_amount),
+            buy_price: buyPrice,
+            target_sell_time,
+            current_time: new Date().toISOString(),
+            market_prediction: aiPred
+        };
+
+        // Send to Kafka
+        await producer.send({
+            topic: 'investment.analysis.request',
+            messages: [{ key: requestId, value: JSON.stringify(analysisPayload) }]
+        });
+
+        // Wait for reply with 120s timeout
+        aiAnalysis = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                if (pendingAnalysisRequests.has(requestId)) {
+                    pendingAnalysisRequests.delete(requestId);
+                    resolve(null);
+                    console.warn(`[KAFKA TIMEOUT] Analysis request ${requestId} timed out`);
+                }
+            }, 1200000);
+
+            pendingAnalysisRequests.set(requestId, { resolve, reject, timeout });
+        });
+    } catch (err) {
+        console.error('[AI ANALYSIS ERROR]', err.message);
+    }
+
+    // Process Result
+    let predictedPrice, predictedProfitUsdt, aiAdvice, predictedPercent, displayDirection, displayConfidence;
+    if (aiAnalysis && !aiAnalysis.error) {
+        predictedPrice = aiAnalysis.predicted_price;
+        predictedProfitUsdt = aiAnalysis.predicted_profit_usdt;
+        aiAdvice = aiAnalysis.advice;
+        predictedPercent = aiAnalysis.predicted_profit_percent;
+        displayDirection = aiAnalysis.details?.direction || aiPred.direction;
+        displayConfidence = aiAnalysis.details?.confidence || aiPred.confidence;
+
+        // Enrich aiPred
+        aiPred.direction = displayDirection;
+        aiPred.confidence = displayConfidence;
+        aiPred.change_percent = predictedPercent;
+    } else {
+        // Fallback
+        predictedPrice = buyPrice + (buyPrice * ((aiPred.change_percent || 0) / 100));
+        predictedProfitUsdt = (predictedPrice - buyPrice) * coinAmount;
+        aiAdvice = generateAdvice(aiPred, buyPrice, usdt_amount);
+        predictedPercent = aiPred.change_percent || 0;
+    }
+
+    return {
+        buyPrice,
+        coinAmount,
+        aiPred,
+        aiAdvice,
+        predictedPrice,
+        predictedProfitUsdt,
+        predictedPercent
+    };
+}
+
+// POST /v1/investments/analyze - Preview analysis only
+app.post('/v1/investments/analyze', async (req, res) => {
+    const { symbol, usdt_amount, target_sell_time } = req.body;
+    if (!symbol || !usdt_amount || !target_sell_time) {
+        return res.status(400).json({ error: 'Missing required fields' });
     }
 
     try {
-        // Get current price
-        const buyPrice = await getCurrentPrice(symbol);
-        const coinAmount = usdt_amount / buyPrice;
+        const result = await analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time);
 
-        // Get AI prediction from latest aggregated prediction
-        const aiPred = getAIPredictionForSymbol(symbol);
-
-        if (!aiPred) {
-            return res.status(503).json({
-                error: 'AI prediction not available yet. Please wait for next prediction cycle.'
-            });
+        res.json({
+            ai_recommendation: {
+                advice: result.aiAdvice,
+                predicted_price: result.predictedPrice,
+                predicted_profit_usdt: result.predictedProfitUsdt,
+                predicted_profit_percent: result.predictedPercent,
+                confidence: result.aiPred.confidence,
+                direction: result.aiPred.direction,
+                causal_factor: result.aiPred.causal_factor,
+                buy_price: result.buyPrice // Expose buy price context
+            }
+        });
+    } catch (err) {
+        if (err.message === 'AI_PREDICTION_UNAVAILABLE') {
+            return res.status(503).json({ error: 'AI prediction not available yet.' });
         }
+        res.status(500).json({ error: err.message });
+    }
+});
 
-        // Calculate predicted profit in USDT
-        const predictedPrice = buyPrice + (buyPrice * (aiPred.change_percent / 100));
-        const predictedProfitUsdt = (predictedPrice - buyPrice) * coinAmount;
+// POST /v1/investments - Create new investment simulation
+app.post('/v1/investments', async (req, res) => {
+    const { user_id, symbol, usdt_amount, target_sell_time, ai_analysis } = req.body;
 
-        // Generate AI advice in Vietnamese
-        const aiAdvice = generateAdvice(aiPred, buyPrice, usdt_amount);
+    if (!user_id || !symbol || !usdt_amount || !target_sell_time) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    try {
+        let buyPrice, coinAmount, aiPred, aiAdvice, predictedProfitUsdt, predictedPrice, predictedPercent;
+
+        if (ai_analysis) {
+            console.log(`[INVESTMENT] Using pre-calculated analysis for ${symbol}`);
+            buyPrice = ai_analysis.buy_price || await getCurrentPrice(symbol);
+            coinAmount = usdt_amount / buyPrice;
+            aiAdvice = ai_analysis.advice;
+            predictedProfitUsdt = ai_analysis.predicted_profit_usdt;
+            predictedPrice = ai_analysis.predicted_price;
+            predictedPercent = ai_analysis.predicted_profit_percent;
+
+            // Reconstruct aiPred for DB
+            aiPred = {
+                symbol,
+                direction: ai_analysis.direction,
+                confidence: ai_analysis.confidence,
+                change_percent: predictedPercent,
+                causal_factor: ai_analysis.causal_factor,
+                reason: ai_analysis.reason
+            };
+        } else {
+            console.log(`[INVESTMENT] Performing new analysis for ${symbol}`);
+            const analysis = await analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time);
+            buyPrice = analysis.buyPrice;
+            coinAmount = analysis.coinAmount;
+            aiPred = analysis.aiPred;
+            aiAdvice = analysis.aiAdvice;
+            predictedProfitUsdt = analysis.predictedProfitUsdt;
+            predictedPrice = analysis.predictedPrice;
+            predictedPercent = analysis.predictedPercent;
+        }
 
         // Insert investment
         const result = await pool.query(`
@@ -160,7 +320,7 @@ app.post('/v1/investments', async (req, res) => {
                 advice: aiAdvice,
                 predicted_price: predictedPrice,
                 predicted_profit_usdt: predictedProfitUsdt,
-                predicted_profit_percent: aiPred.change_percent,
+                predicted_profit_percent: predictedPercent,
                 confidence: aiPred.confidence,
                 direction: aiPred.direction
             }
@@ -172,18 +332,80 @@ app.post('/v1/investments', async (req, res) => {
                 advice: aiAdvice,
                 predicted_price: predictedPrice,
                 predicted_profit_usdt: predictedProfitUsdt,
-                predicted_profit_percent: aiPred.change_percent,
+                predicted_profit_percent: predictedPercent,
                 confidence: aiPred.confidence,
                 direction: aiPred.direction,
                 causal_factor: aiPred.causal_factor,
                 reason: aiPred.reason
             }
         });
-    } catch (error) {
-        console.error('[ERROR] Create investment failed:', error);
-        res.status(500).json({ error: 'Internal server error' });
+
+    } catch (err) {
+        console.error('[ERROR] Create investment failed:', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
+
+// SSE Clients map
+const sseClients = new Map(); // userId -> [{ res, id }]
+
+// GET /v1/investments/events - SSE Endpoint
+app.get('/v1/investments/events', (req, res) => {
+    const userId = req.query.user_id;
+    if (!userId) return res.status(400).send('Missing user_id');
+
+    // Headers for SSE
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // Disable buffering for Nginx/Kong
+        'Content-Encoding': 'identity', // Disable compression for SSE
+        'Access-Control-Allow-Origin': '*' // Ensure CORS works for SSE
+    });
+
+    // Send initial connection message and ping to keep alive
+    res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+
+    const heartbeat = setInterval(() => {
+        res.write(': heartbeat\n\n'); // SSE comment to keep connection alive
+    }, 30000);
+
+    // Add client to map
+    if (!sseClients.has(userId)) {
+        sseClients.set(userId, []);
+    }
+    const clientId = Date.now();
+    sseClients.get(userId).push({ res, id: clientId });
+
+    console.log(`[SSE] User ${userId} connected. Total clients: ${sseClients.get(userId).length}`);
+
+    // Remove client on close
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        const clients = sseClients.get(userId) || [];
+        sseClients.set(userId, clients.filter(c => c.id !== clientId));
+        if (sseClients.get(userId).length === 0) {
+            sseClients.delete(userId);
+        }
+        console.log(`[SSE] User ${userId} disconnected. Remaining clients: ${sseClients.get(userId)?.length || 0}`);
+    });
+});
+
+// Helper: Send message to user via SSE
+function sendToUser(userId, data) {
+    const clients = sseClients.get(userId);
+    if (!clients || clients.length === 0) return;
+
+    console.log(`[SSE] Sending ${data.type} to user ${userId} (${clients.length} clients)`);
+    clients.forEach(client => {
+        try {
+            client.res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch (err) {
+            console.error(`[SSE ERROR] Send failed:`, err.message);
+        }
+    });
+}
 
 // GET /v1/investments/:user_id - Get user's investments
 app.get('/v1/investments/:user_id', async (req, res) => {
@@ -314,53 +536,6 @@ function calculateAccuracy(actual, predicted) {
     return Math.max(0, Math.min(100, (1 - error) * 100));
 }
 
-// WebSocket server no longer needed, using SSE
-// const wss = new WebSocket.Server({ server }); <- Removed but keeping http server
-
-
-// SSE Clients map
-const sseClients = new Map(); // userId -> [{ res, id }]
-
-// GET /v1/investments/events - SSE Endpoint
-app.get('/v1/investments/events', (req, res) => {
-    const userId = req.query.user_id;
-    if (!userId) return res.status(400).send('Missing user_id');
-
-    // Headers for SSE
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-    });
-
-    res.write(`data: {"type":"connected"}\n\n`);
-
-    // Add client to map
-    if (!sseClients.has(userId)) {
-        sseClients.set(userId, []);
-    }
-    const clientId = Date.now();
-    sseClients.get(userId).push({ res, id: clientId });
-
-    console.log(`[SSE] User ${userId} connected`);
-
-    // Remove client on close
-    req.on('close', () => {
-        const clients = sseClients.get(userId) || [];
-        sseClients.set(userId, clients.filter(c => c.id !== clientId));
-        console.log(`[SSE] User ${userId} disconnected`);
-    });
-});
-
-// Helper: Send message to user via SSE
-function sendToUser(userId, data) {
-    const clients = sseClients.get(userId);
-    if (clients && clients.length > 0) {
-        clients.forEach(client => {
-            client.res.write(`data: ${JSON.stringify(data)}\n\n`);
-        });
-    }
-}
 
 // Background job: Auto-close investments at target time
 cron.schedule('* * * * *', async () => {
@@ -394,7 +569,8 @@ const PORT = process.env.PORT || 8001;
 server.listen(PORT, async () => {
     await initDB();
     await producer.connect();
-    await consumeAIPredictions();
+    await fetchLatestPredictionFromCore(); // Warmup
+    await consumeKafkaTopics();
     console.log(`[INVESTMENT SERVICE] Running on port ${PORT}`);
     console.log(`[WEBSOCKET] Ready for connections`);
 });

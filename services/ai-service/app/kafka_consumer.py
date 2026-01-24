@@ -26,10 +26,12 @@ if RAW_TOPIC and RAW_TOPIC not in TOPICS:
 if not TOPICS:
     TOPICS = ["news_analyzed"]
 
+TOPICS.append("investment.analysis.request")
+
 consumer_conf = {
     "bootstrap.servers": KAFKA_BROKER,
     "group.id": GROUP,
-    "auto.offset.reset": "earliest"
+    "auto.offset.reset": "latest"  # Only consume NEW messages, skip historical data
 }
 
 
@@ -56,8 +58,14 @@ def start_consumer():
     
     try:
         message_count = 0
+        poll_count = 0
         while True:
             msg = consumer.poll(1.0)
+            poll_count += 1
+            
+            # Log polling activity every 60 seconds
+            # if poll_count % 60 == 0:
+            #     print(f"[CONSUMER-HEARTBEAT] Polled {poll_count} times, received {message_count} messages")
             
             if msg is None:
                 continue
@@ -71,13 +79,37 @@ def start_consumer():
             
             # Parse message
             payload = msg.value().decode("utf-8")
+            
             try:
                 j = json.loads(payload)
             except Exception as e:
-                print(f"[JSON ERROR] {e}")
+                print(f"[JSON ERROR] Failed to parse message: {e}")
                 continue
             
             message_count += 1
+            
+            # Handle Investment Analysis Request
+            if msg.topic() == "investment.analysis.request":
+                try:
+                    from app.modules.investment_advisor import analyze_investment
+                    from app.kafka_producer import produce_investment_result
+                    
+                    print(f"[KAFKA] Investment Analysis Request for {j.get('symbol')}")
+                    
+                    # Analyze
+                    advice_result = analyze_investment(j)
+                    # Merge original request data for correlation (specifically requestId)
+                    # We merge the result INTO the request data (or vice versa) to ensure requestId is passed back
+                    final_result = {**j, **advice_result} 
+                    
+                    # Publish Result
+                    produce_investment_result(final_result)
+                    print(f"[KAFKA] Sent Investment Analysis Result for {j.get('symbol')}")
+                    
+                except Exception as e:
+                    print(f"[KAFKA ERROR] Investment analysis failed: {e}")
+                continue
+
             title = j.get("title") or ""
             
             # Quick relevance check
@@ -85,7 +117,7 @@ def start_consumer():
             category = j.get('category', 'General')
             
             if relevance < 0.3 and category not in ['Finance', 'Economy', 'Policy', 'Crypto', 'Market']:
-                continue  # Silently skip low relevance
+                continue  # Skip low relevance silently
             
             # Add sentiment if not present
             if not (j.get('sentiment_label') or j.get('sentiment_score')):
@@ -140,14 +172,12 @@ def start_consumer():
             # Add to buffer (prediction runs on schedule)
             result = process_news(out)
             
-            if result.get("status") == "duplicate":
-                # Don't spam logs with duplicates
-                pass
-            else:
-                # New article added
+            if result.get("status") != "duplicate":
+                # New article added - only log new articles
                 buffer_size = result.get("buffer_size", 0)
-                if buffer_size % 5 == 0:  # Log every 5 articles
-                    print(f"[STATUS] Buffer: {buffer_size} articles")
+                print(f"[NEWS-BUFFERED] ✓ New article (total: {buffer_size}): {title[:80]}...")
+                if buffer_size % 5 == 0:  # Summary every 5 articles
+                    print(f"[BUFFER-STATUS] {buffer_size} articles ready for next prediction cycle")
                 
     except KeyboardInterrupt:
         print("\n[CONSUMER] Shutting down...")

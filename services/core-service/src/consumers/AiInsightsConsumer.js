@@ -1,7 +1,7 @@
 const kafka = require('../config/kafka');
 const db = require('../config/db');
 
-const groupId = process.env.AI_INSIGHTS_CONSUMER_GROUP_ID || 'core-service-ai-insights-consumer';
+const groupId = process.env.AI_INSIGHTS_CONSUMER_GROUP_ID || 'core-service-ai-insights-consumer-v3';
 const consumer = kafka.consumer({ groupId });
 
 const TOPIC = process.env.AI_INSIGHTS_TOPIC || 'ai_insights';
@@ -9,7 +9,7 @@ const TOPIC = process.env.AI_INSIGHTS_TOPIC || 'ai_insights';
 const run = async () => {
   await consumer.connect();
   console.log('AiInsightsConsumer connected, subscribing to', TOPIC);
-  await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
 
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {
@@ -17,17 +17,29 @@ const run = async () => {
         const payload = JSON.parse(message.value.toString());
         const time = new Date();
 
-        // Determine type - support new aggregated_prediction format
+        console.log(`[AI-INSIGHTS-RECEIVED] Topic: ${topic}, Partition: ${partition}, Offset: ${message.offset}`);
+
+        // Determine type - support both old and new formats
         let type = payload.type || 'unknown';
         let body = payload;
 
-        // Handle nested insight format
+        // Handle nested insight format (old causal events)
         if (payload.insight) {
           body = payload.insight;
         }
 
-        // Log different types appropriately
-        if (type === 'aggregated_prediction') {
+        // Handle new prediction format with meta/predictions
+        if (payload.meta && payload.predictions) {
+          type = 'aggregated_prediction';
+          const meta = payload.meta;
+          const predictions = payload.predictions || [];
+          console.log(`[PREDICTION-RECEIVED] ${predictions.length} symbols | Sentiment: ${meta.market_sentiment_label} (${meta.market_sentiment_score})`);
+          predictions.forEach(p => {
+            const forecast = p.forecast?.next_1h || {};
+            console.log(`  ${p.symbol}: ${forecast.direction} @ ${p.current_price} (Conf: ${forecast.confidence}%)`);
+          });
+        } else if (type === 'aggregated_prediction') {
+          // Old format
           const predictions = payload.predictions || [];
           console.log(`[AGGREGATED] Received prediction for ${predictions.length} symbols`);
           predictions.forEach(p => {
@@ -45,14 +57,14 @@ const run = async () => {
             `INSERT INTO ai_insights (time, type, payload) VALUES ($1, $2, $3)`,
             [time, type, JSON.stringify(body)]
           );
-          console.log('Inserted ai_insight of type', type);
+          console.log(`[DB-INSERTED] AI insight type='${type}' saved to database`);
         } catch (err) {
-          console.error('Error inserting ai_insight:', err);
+          console.error('[DB-ERROR] Error inserting ai_insight:', err);
         } finally {
           client.release();
         }
       } catch (err) {
-        console.error('Error processing ai_insights message:', err);
+        console.error('[CONSUMER-ERROR] Error processing ai_insights message:', err);
       }
     }
   });

@@ -58,6 +58,22 @@ session = _make_session()
 def _url_hash(url: str) -> str:
     return hashlib.sha256(url.encode('utf-8')).hexdigest()
 
+def _is_crypto_related(title: str, content: str) -> bool:
+    """Check if article contains crypto-related keywords."""
+    title_lower = title.lower()
+    content_lower = content.lower()
+    
+    crypto_keywords = [
+        'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'cryptocurrency',
+        'blockchain', 'binance', 'bnb', 'solana', 'sol', 'cardano', 'ada',
+        'ripple', 'xrp', 'dogecoin', 'doge', 'polkadot', 'dot', 'avalanche',
+        'avax', 'polygon', 'matic', 'defi', 'nft', 'web3', 'altcoin',
+        'stablecoin', 'usdt', 'usdc', 'mining', 'wallet', 'exchange',
+        'token', 'coin', 'satoshi', 'halving', 'bull market', 'bear market'
+    ]
+    
+    return any(kw in title_lower or kw in content_lower for kw in crypto_keywords)
+
 async def process_article_task(item: dict):
     """Async task to extract and publish article."""
     url = item.get('link')
@@ -70,8 +86,17 @@ async def process_article_task(item: dict):
     # Check directly provided content first (RSS optimization)
     # If we have title + long content, we can skip fetching!
     if item.get('manual_content') and item.get('manual_title') and len(item['manual_content']) > 500:
-        if "Google News" in item['manual_title']:
-            LOG.info(f"Skipping Google News aggregator: {url}")
+        title_lower = item['manual_title'].lower()
+        content_lower = item['manual_content'].lower()
+        
+        # Skip Google News aggregator
+        if "google news" in title_lower:
+            LOG.debug(f"Skipping Google News aggregator: {url}")
+            return
+        
+        # CRYPTO KEYWORD FILTER
+        if not _is_crypto_related(item['manual_title'], item['manual_content']):
+            LOG.debug(f"Skipping non-crypto article: {item['manual_title'][:60]}...")
             return
 
         LOG.info(f"Using direct RSS content for {url}")
@@ -123,6 +148,11 @@ async def process_article_task(item: dict):
         if not data or not data.get('title'):
              LOG.warning(f"Skipping {url}: extraction incomplete")
              return
+        
+        # CRYPTO KEYWORD FILTER
+        if not _is_crypto_related(data.get('title', ''), data.get('content', '')):
+            LOG.debug(f"Skipping non-crypto article (HTML): {data.get('title', '')[:60]}...")
+            return
              
         # 3. Publish
         payload = {

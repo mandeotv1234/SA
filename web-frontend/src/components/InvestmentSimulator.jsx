@@ -1,19 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
-import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity } from 'lucide-react';
 
 export default function InvestmentSimulator() {
     const { authFetch, user, symbol, token } = useStore();
     const [investments, setInvestments] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [analyzing, setAnalyzing] = useState(false);
 
     // Form state
     const [selectedSymbol, setSelectedSymbol] = useState(symbol || 'BTCUSDT');
-    const [usdtAmount, setUsdtAmount] = useState('');
+    const [usdtAmount, setUsdtAmount] = useState('1000');
     const [targetDate, setTargetDate] = useState('');
-    const [aiRecommendation, setAiRecommendation] = useState(null);
+
+    // Analysis Result
+    const [analysisResult, setAnalysisResult] = useState(null);
+
+    // Popup State
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [notification, setNotification] = useState(null); // { type: 'success'|'info'|'closed', message, data }
 
     const wsRef = useRef(null);
+
+    useEffect(() => {
+        if (symbol) setSelectedSymbol(symbol);
+    }, [symbol]);
 
     useEffect(() => {
         loadInvestments();
@@ -29,8 +40,7 @@ export default function InvestmentSimulator() {
     const connectSSE = () => {
         if (!user?.id || !token) return;
 
-        // Use Gateway URL with invest-api prefix
-        // Hardcode localhost:8000 for now or use ENV
+        // Use Gateway URL
         const gateway = 'http://localhost:8000';
         const url = `${gateway}/invest-api/v1/investments/events?user_id=${user.id}&token=${encodeURIComponent(token)}`;
 
@@ -38,18 +48,21 @@ export default function InvestmentSimulator() {
         const eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
+            console.log('[SSE] Raw data received:', event.data);
             try {
                 const data = JSON.parse(event.data);
-                console.log('SSE Message:', data);
 
-                if (data.type === 'connected') {
-                    console.log('SSE Connected');
-                } else if (data.type === 'investment_created') {
+                if (data.type === 'investment_created') {
+                    console.log('[SSE] Investment created event received');
                     loadInvestments();
-                    alert('Đầu tư đã được tạo thành công!');
                 } else if (data.type === 'investment_closed') {
+                    console.log('[SSE] Investment closed event received, showing popup');
                     loadInvestments();
-                    showNotification(data);
+                    setNotification({
+                        type: 'closed',
+                        message: 'Lệnh đầu tư đã kết thúc!',
+                        data: data
+                    });
                 }
             } catch (e) {
                 console.error('SSE Parse Error', e);
@@ -57,18 +70,16 @@ export default function InvestmentSimulator() {
         };
 
         eventSource.onerror = (error) => {
-            console.error('SSE Error', error);
+            console.error('[SSE] EventSource failed:', error);
             eventSource.close();
-            // Retry after 5s
             setTimeout(connectSSE, 5000);
         };
 
-        wsRef.current = eventSource; // Re-use ref for cleanup
+        wsRef.current = eventSource;
     };
 
     const loadInvestments = async () => {
         if (!user?.id) return;
-
         try {
             const res = await authFetch(`/v1/investments/${user.id}`);
             if (res.ok) {
@@ -80,14 +91,48 @@ export default function InvestmentSimulator() {
         }
     };
 
-    const createInvestment = async (e) => {
+    const handleAnalyze = async (e) => {
         e.preventDefault();
-
-        if (!user || !user.id) {
-            alert('Vui lòng đăng nhập lại để thực hiện tính năng này.');
+        if (!user?.id) {
+            alert('Vui lòng đăng nhập lại.');
             return;
         }
 
+        if (!targetDate) {
+            alert('Vui lòng chọn thời gian bán.');
+            return;
+        }
+
+        setAnalyzing(true);
+        setAnalysisResult(null);
+
+        try {
+            const res = await authFetch('/v1/investments/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: selectedSymbol,
+                    usdt_amount: parseFloat(usdtAmount),
+                    target_sell_time: new Date(targetDate).toISOString()
+                })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                setAnalysisResult(data.ai_recommendation);
+            } else {
+                alert(data.error || 'Phân tích thất bại');
+            }
+        } catch (error) {
+            console.error('Analyze error', error);
+            alert('Lỗi kết nối đến server phân tích.');
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    const handleConfirmInvestment = async () => {
+        setShowConfirmModal(false);
         setLoading(true);
 
         try {
@@ -98,331 +143,310 @@ export default function InvestmentSimulator() {
                     user_id: user.id,
                     symbol: selectedSymbol,
                     usdt_amount: parseFloat(usdtAmount),
-                    target_sell_time: new Date(targetDate).toISOString()
+                    target_sell_time: new Date(targetDate).toISOString(),
+                    ai_analysis: analysisResult // Gửi kết quả phân tích có sẵn để tránh gọi AI service lần nữa
                 })
             });
 
+            const data = await res.json();
             if (res.ok) {
-                const data = await res.json();
-                setAiRecommendation(data.ai_recommendation);
-                setUsdtAmount('');
-                setTargetDate('');
                 loadInvestments();
+                setNotification({
+                    type: 'success',
+                    message: 'Đầu tư thành công!',
+                    data: data.investment
+                });
+                setAnalysisResult(null); // Reset form
+                setTargetDate('');
             } else {
-                const error = await res.json();
-                alert(error.error || 'Tạo đầu tư thất bại');
+                alert(data.error || 'Tạo đầu tư thất bại');
             }
         } catch (error) {
-            console.error('Create investment failed', error);
-            alert('Lỗi kết nối');
+            alert('Lỗi khi tạo đầu tư.');
         } finally {
             setLoading(false);
         }
     };
 
-    const sellInvestment = async (id) => {
-        if (!confirm('Bạn có chắc muốn bán ngay bây giờ?')) return;
-
+    // Helper to parse messy AI advice
+    const getFormattedAdvice = (rawAdvice) => {
+        if (!rawAdvice) return 'Không có lời khuyên.';
         try {
-            const res = await authFetch(`/v1/investments/${id}/sell`, {
-                method: 'POST'
-            });
-
-            if (res.ok) {
-                loadInvestments();
+            if (rawAdvice.trim().startsWith('{')) {
+                const obj = JSON.parse(rawAdvice);
+                return obj.thông_báo || obj.advice || obj.message || Object.values(obj)[0] || rawAdvice;
             }
-        } catch (error) {
-            console.error('Sell failed', error);
-        }
+        } catch { }
+        return rawAdvice.replace(/[*#]/g, ''); // Basic clean
     };
 
-    const showNotification = (data) => {
-        const isProfit = data.result === 'profit';
-        const message = `
-${data.symbol} đã đóng!
-${isProfit ? '💰 Lời' : '📉 Lỗ'}: ${Math.abs(data.actual_profit_usdt).toFixed(2)} USDT (${data.actual_profit_percent.toFixed(2)}%)
-AI dự đoán: ${data.predicted_profit_usdt.toFixed(2)} USDT
-Độ chính xác: ${data.ai_accuracy.toFixed(1)}%
-        `;
-        alert(message);
+    // UI Helper: Profit/Loss Label
+    const renderProfitLabel = (value, isPercent = false) => {
+        const num = parseFloat(value || 0);
+        const prefix = num > 0 ? '+' : '';
+        const colorClass = num >= 0 ? 'text-up' : 'text-down';
+        return <span className={`text-bold ${colorClass}`}>{prefix}{num.toFixed(2)}{isPercent ? '%' : '$'}</span>;
     };
 
     return (
         <div className="investment-simulator">
-            <h2>🎯 Mô phỏng Đầu tư với AI</h2>
+            <h2>
+                <BrainCircuit className="brand-icon" size={32} />
+                Mô Phỏng Đầu Tư AI
+            </h2>
 
-            {/* Create Investment Form */}
-            <div className="create-form">
-                <h3>Tạo đầu tư mới</h3>
-                <form onSubmit={createInvestment}>
-                    <div className="form-group">
-                        <label>Cặp tiền</label>
-                        <select value={selectedSymbol} onChange={(e) => setSelectedSymbol(e.target.value)}>
-                            <option value="BTCUSDT">BTC/USDT</option>
-                            <option value="ETHUSDT">ETH/USDT</option>
-                            <option value="BNBUSDT">BNB/USDT</option>
-                            <option value="SOLUSDT">SOL/USDT</option>
-                            <option value="XRPUSDT">XRP/USDT</option>
-                        </select>
-                    </div>
-
-                    <div className="form-group">
-                        <label>Số tiền (USDT)</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            value={usdtAmount}
-                            onChange={(e) => setUsdtAmount(e.target.value)}
-                            placeholder="Nhập số USDT"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label>Thời điểm bán</label>
-                        <input
-                            type="datetime-local"
-                            value={targetDate}
-                            onChange={(e) => setTargetDate(e.target.value)}
-                            required
-                        />
-                    </div>
-
-                    <button type="submit" disabled={loading}>
-                        {loading ? 'Đang xử lý...' : 'Tạo đầu tư'}
-                    </button>
-                </form>
-
-                {/* AI Recommendation */}
-                {aiRecommendation && (
-                    <div className={`ai-recommendation ${aiRecommendation.direction.toLowerCase()}`}>
-                        <h4>💡 Tư vấn từ AI</h4>
-                        <div className="advice">{aiRecommendation.advice}</div>
-                        <div className="prediction-details">
-                            <div>Dự đoán: {aiRecommendation.direction} {aiRecommendation.predicted_profit_percent > 0 ? '+' : ''}{aiRecommendation.predicted_profit_percent.toFixed(2)}%</div>
-                            <div>Lời/lỗ dự kiến: {aiRecommendation.predicted_profit_usdt.toFixed(2)} USDT</div>
-                            <div>Độ tin cậy: {(aiRecommendation.confidence * 100).toFixed(0)}%</div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Investments List */}
-            <div className="investments-list">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                    <h3 style={{ margin: 0 }}>Danh sách đầu tư</h3>
-                    <button onClick={loadInvestments} style={{ padding: '5px 10px', fontSize: '12px', background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 4, color: 'white', cursor: 'pointer' }}>
-                        🔄 Làm mới
-                    </button>
-                </div>
-                {investments.length === 0 ? (
-                    <p className="empty">Chưa có đầu tư nào</p>
-                ) : (
-                    investments.map(inv => (
-                        <div key={inv.id} className={`investment-card ${inv.status}`}>
-                            <div className="inv-header">
-                                <span className="symbol">{inv.symbol}</span>
-                                <span className={`status ${inv.status}`}>{inv.status === 'active' ? '🟢 Đang mở' : '⚫ Đã đóng'}</span>
+            <div className="simulator-grid">
+                {/* Left: Control Panel */}
+                <div className="sidebar-col">
+                    <div className="card">
+                        <h3>Tham Số Đầu Tư</h3>
+                        <form onSubmit={handleAnalyze}>
+                            <div className="input-group">
+                                <label>Cặp Coin</label>
+                                <div className="input-wrapper">
+                                    <input
+                                        type="text"
+                                        value={selectedSymbol}
+                                        onChange={(e) => setSelectedSymbol(e.target.value.toUpperCase())}
+                                        className="styled-input"
+                                        style={{ paddingLeft: '12px' }}
+                                    />
+                                </div>
                             </div>
 
-                            <div className="inv-details">
-                                <div className="detail-row">
-                                    <span>Vốn đầu tư:</span>
-                                    <strong>{parseFloat(inv.usdt_amount).toFixed(2)} USDT</strong>
+                            <div className="input-group">
+                                <label>Số Vốn (USDT)</label>
+                                <div className="input-wrapper">
+                                    <DollarSign className="input-icon" size={18} />
+                                    <input
+                                        type="number"
+                                        value={usdtAmount}
+                                        onChange={(e) => setUsdtAmount(e.target.value)}
+                                        className="styled-input"
+                                    />
                                 </div>
-                                <div className="detail-row">
-                                    <span>Giá mua:</span>
-                                    <span>{parseFloat(inv.buy_price).toFixed(2)}</span>
+                            </div>
+
+                            <div className="input-group">
+                                <label>Thời điểm Bán (Mục tiêu)</label>
+                                <div className="input-wrapper">
+                                    <Calendar className="input-icon" size={18} />
+                                    <input
+                                        type="datetime-local"
+                                        value={targetDate}
+                                        onChange={(e) => setTargetDate(e.target.value)}
+                                        className="styled-input"
+                                    />
                                 </div>
-                                {inv.status === 'closed' && (
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={analyzing || loading}
+                                className="btn-primary"
+                            >
+                                {analyzing ? (
                                     <>
-                                        <div className="detail-row">
-                                            <span>Giá bán:</span>
-                                            <span>{parseFloat(inv.sell_price).toFixed(2)}</span>
-                                        </div>
-                                        <div className={`detail-row profit ${inv.actual_profit_usdt >= 0 ? 'positive' : 'negative'}`}>
-                                            <span>Kết quả:</span>
-                                            <strong>{inv.actual_profit_usdt >= 0 ? '+' : ''}{parseFloat(inv.actual_profit_usdt).toFixed(2)} USDT</strong>
-                                        </div>
-                                        <div className="detail-row">
-                                            <span>AI dự đoán:</span>
-                                            <span>{parseFloat(inv.predicted_profit_usdt).toFixed(2)} USDT</span>
-                                        </div>
+                                        <Activity className="animate-spin" size={20} />
+                                        Đang Phân Tích...
+                                    </>
+                                ) : (
+                                    <>
+                                        <BrainCircuit size={20} />
+                                        Phân Tích Với AI
                                     </>
                                 )}
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* AI Analysis Result Preview */}
+                    {analysisResult && (
+                        <div className="analysis-preview card">
+                            <div className="analysis-header">
+                                <AlertCircle size={20} />
+                                Kết Quả Phân Tích AI
                             </div>
 
-                            {inv.status === 'active' && (
-                                <button className="sell-btn" onClick={() => sellInvestment(inv.id)}>
-                                    Bán ngay
-                                </button>
-                            )}
+                            <div className="advice-text">
+                                "{getFormattedAdvice(analysisResult.advice)}"
+                            </div>
+
+                            <div className="stats-grid">
+                                <div className="stat-item">
+                                    <div className="stat-label">Xu hướng</div>
+                                    <div className={`stat-value ${analysisResult.direction === 'UP' ? 'text-up' : 'text-down'}`}>
+                                        {analysisResult.direction}
+                                    </div>
+                                </div>
+                                <div className="stat-item">
+                                    <div className="stat-label">Tin cậy</div>
+                                    <div className="stat-value" style={{ color: 'var(--accent-yellow)' }}>
+                                        {(analysisResult.confidence * 100).toFixed(0)}%
+                                    </div>
+                                </div>
+                                <div className="stat-item">
+                                    <div className="stat-label">Lợi Nhuận</div>
+                                    <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_usdt)}</div>
+                                </div>
+                                <div className="stat-item">
+                                    <div className="stat-label">% Dự Kiến</div>
+                                    <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_percent, true)}</div>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setShowConfirmModal(true)}
+                                className="btn-primary btn-success"
+                            >
+                                <CheckCircle size={20} />
+                                Xác Nhận Đầu Tư
+                            </button>
                         </div>
-                    ))
-                )}
+                    )}
+                </div>
+
+                {/* Right: History & Active Investments */}
+                <div className="history-col">
+                    <div className="investment-table-container">
+                        <div className="table-header">
+                            Danh Sách Đầu Tư Của Bạn
+                        </div>
+                        <div className="simulator-table-wrapper">
+                            <table className="simulator-table">
+                                <thead>
+                                    <tr>
+                                        <th>Coin</th>
+                                        <th>Thời Gian Mua</th>
+                                        <th>Giá Mua</th>
+                                        <th>Dự Đoán AI</th>
+                                        <th>Trạng Thái</th>
+                                        <th style={{ textAlign: 'right' }}>Kết Quả</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {investments.map(inv => (
+                                        <tr key={inv.id}>
+                                            <td className="text-bold" style={{ color: 'var(--accent-blue)' }}>{inv.symbol}</td>
+                                            <td>
+                                                {new Date(inv.buy_time).toLocaleTimeString()}
+                                                <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
+                                            </td>
+                                            <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
+                                            <td>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
+                                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span className={`status-badge ${inv.status === 'active' ? 'status-active' : 'status-closed'}`}>
+                                                    {inv.status === 'active' ? 'Đang chạy' : 'Đã đóng'}
+                                                </span>
+                                            </td>
+                                            <td style={{ textAlign: 'right' }} className="text-mono">
+                                                {inv.status === 'closed' ? (
+                                                    renderProfitLabel(inv.actual_profit_usdt)
+                                                ) : (
+                                                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {investments.length === 0 && (
+                                        <tr>
+                                            <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                                Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <style>{`
-                .investment-simulator {
-                    padding: 20px;
-                    max-width: 1200px;
-                    margin: 0 auto;
-                }
-                
-                .investment-simulator h2 {
-                    margin-bottom: 20px;
-                    color: var(--accent-yellow);
-                }
-                
-                .create-form {
-                    background: rgba(255,255,255,0.05);
-                    padding: 20px;
-                    border-radius: 12px;
-                    margin-bottom: 30px;
-                }
-                
-                .form-group {
-                    margin-bottom: 15px;
-                }
-                
-                .form-group label {
-                    display: block;
-                    margin-bottom: 5px;
-                    font-size: 14px;
-                    color: #aaa;
-                }
-                
-                .form-group input,
-                .form-group select {
-                    width: 100%;
-                    padding: 10px;
-                    background: rgba(0,0,0,0.3);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 6px;
-                    color: white;
-                    font-size: 14px;
-                }
-                
-                .create-form button {
-                    width: 100%;
-                    padding: 12px;
-                    background: var(--accent-yellow);
-                    color: black;
-                    border: none;
-                    border-radius: 6px;
-                    font-weight: bold;
-                    cursor: pointer;
-                    margin-top: 10px;
-                }
-                
-                .create-form button:disabled {
-                    opacity: 0.5;
-                    cursor: not-allowed;
-                }
-                
-                .ai-recommendation {
-                    margin-top: 20px;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border-left: 4px solid;
-                }
-                
-                .ai-recommendation.up {
-                    background: rgba(16, 185, 129, 0.1);
-                    border-color: var(--accent-green);
-                }
-                
-                .ai-recommendation.down {
-                    background: rgba(239, 68, 68, 0.1);
-                    border-color: var(--accent-red);
-                }
-                
-                .ai-recommendation.neutral {
-                    background: rgba(255,255,255,0.05);
-                    border-color: #888;
-                }
-                
-                .ai-recommendation h4 {
-                    margin-bottom: 10px;
-                }
-                
-                .advice {
-                    white-space: pre-line;
-                    margin-bottom: 10px;
-                    font-size: 14px;
-                    line-height: 1.6;
-                }
-                
-                .prediction-details {
-                    font-size: 12px;
-                    color: #999;
-                }
-                
-                .prediction-details div {
-                    margin-top: 5px;
-                }
-                
-                .investments-list h3 {
-                    margin-bottom: 15px;
-                }
-                
-                .investment-card {
-                    background: rgba(255,255,255,0.03);
-                    padding: 15px;
-                    border-radius: 8px;
-                    margin-bottom: 10px;
-                    border: 1px solid rgba(255,255,255,0.1);
-                }
-                
-                .inv-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 12px;
-                }
-                
-                .inv-header .symbol {
-                    font-size: 16px;
-                    font-weight: bold;
-                }
-                
-                .inv-header .status {
-                    font-size: 12px;
-                }
-                
-                .detail-row {
-                    display: flex;
-                    justify-content: space-between;
-                    padding: 5px 0;
-                    font-size: 13px;
-                }
-                
-                .detail-row.profit.positive {
-                    color: var(--accent-green);
-                }
-                
-                .detail-row.profit.negative {
-                    color: var(--accent-red);
-                }
-                
-                .sell-btn {
-                    width: 100%;
-                    padding: 8px;
-                    background: var(--accent-red);
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    margin-top: 10px;
-                    font-size: 13px;
-                }
-                
-                .empty {
-                    text-align: center;
-                    color: #666;
-                    padding: 40px;
-                }
-            `}</style>
+            {/* Confirm Modal */}
+            {showConfirmModal && (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <h3 className="modal-title">Xác Nhận Đầu Tư?</h3>
+                        <div className="modal-body">
+                            Bạn sắp mở lệnh mua <b>{selectedSymbol}</b> với giá trị <b>${usdtAmount}</b>.<br />
+                            Lệnh sẽ tự động bán vào lúc: <br />
+                            <span className="text-bold" style={{ color: 'var(--accent-blue)' }}>{new Date(targetDate).toLocaleString()}</span>
+                        </div>
+                        <div className="modal-footer">
+                            <button
+                                onClick={() => setShowConfirmModal(false)}
+                                className="btn-secondary"
+                            >
+                                Hủy Bỏ
+                            </button>
+                            <button
+                                onClick={handleConfirmInvestment}
+                                className="btn-primary"
+                                style={{ flex: 1 }}
+                            >
+                                Xác Nhận Mua
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Notification Modal */}
+            {notification && (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <button
+                            onClick={() => setNotification(null)}
+                            className="modal-close"
+                        >
+                            <X size={24} />
+                        </button>
+
+                        <div style={{ textAlign: 'center' }}>
+                            {notification.type === 'success' ? (
+                                <CheckCircle className="modal-icon-large text-up" />
+                            ) : (
+                                <DollarSign className="modal-icon-large text-down" style={{ color: 'var(--accent-yellow)' }} />
+                            )}
+
+                            <h3 className="modal-title">{notification.message}</h3>
+
+                            {notification.type === 'closed' && (
+                                <div className="modal-result-box">
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Kết quả thực tế</div>
+                                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>
+                                        {renderProfitLabel(notification.data.actual_profit_usdt)}
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                        Dự báo ban đầu: {renderProfitLabel(notification.data.predicted_profit_usdt)}
+                                        <br />
+                                        Độ chính xác AI: <span style={{ color: 'var(--accent-blue)', fontWeight: 'bold' }}>{parseFloat(notification.data.ai_accuracy).toFixed(1)}%</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {notification.type === 'success' && (
+                                <div style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
+                                    Hệ thống sẽ tự động chốt lệnh khi đến thời điểm mục tiêu.
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => setNotification(null)}
+                                className="btn-primary"
+                                style={{ marginTop: '24px' }}
+                            >
+                                Tuyệt vời
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
