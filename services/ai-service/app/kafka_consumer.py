@@ -56,8 +56,14 @@ def start_consumer():
     
     try:
         message_count = 0
+        poll_count = 0
         while True:
             msg = consumer.poll(1.0)
+            poll_count += 1
+            
+            # Log polling activity every 60 seconds
+            if poll_count % 60 == 0:
+                print(f"[CONSUMER-HEARTBEAT] Polled {poll_count} times, received {message_count} messages")
             
             if msg is None:
                 continue
@@ -71,6 +77,8 @@ def start_consumer():
             
             # Parse message
             payload = msg.value().decode("utf-8")
+            print(f"[NEWS-RECEIVED] Raw message from topic {msg.topic()}, partition {msg.partition()}, offset {msg.offset()}")
+            
             try:
                 j = json.loads(payload)
             except Exception as e:
@@ -79,13 +87,15 @@ def start_consumer():
             
             message_count += 1
             title = j.get("title") or ""
+            print(f"[NEWS-PARSED] Title: {title[:80]}... | Relevance: {j.get('relevance_score', 'N/A')} | Category: {j.get('category', 'N/A')}")
             
             # Quick relevance check
             relevance = float(j.get('relevance_score') or 0.5)
             category = j.get('category', 'General')
             
             if relevance < 0.3 and category not in ['Finance', 'Economy', 'Policy', 'Crypto', 'Market']:
-                continue  # Silently skip low relevance
+                print(f"[NEWS-FILTERED] Skipped due to low relevance ({relevance}) and category ({category})")
+                continue  # Skip low relevance
             
             # Add sentiment if not present
             if not (j.get('sentiment_label') or j.get('sentiment_score')):
@@ -141,13 +151,13 @@ def start_consumer():
             result = process_news(out)
             
             if result.get("status") == "duplicate":
-                # Don't spam logs with duplicates
-                pass
+                print(f"[NEWS-DUPLICATE] Already seen: {title[:60]}...")
             else:
                 # New article added
                 buffer_size = result.get("buffer_size", 0)
-                if buffer_size % 5 == 0:  # Log every 5 articles
-                    print(f"[STATUS] Buffer: {buffer_size} articles")
+                print(f"[NEWS-BUFFERED] ✓ Added to buffer (total: {buffer_size}): {title[:60]}...")
+                if buffer_size % 10 == 0:  # Summary every 10 articles
+                    print(f"[BUFFER-STATUS] {buffer_size} articles ready for next prediction cycle")
                 
     except KeyboardInterrupt:
         print("\n[CONSUMER] Shutting down...")

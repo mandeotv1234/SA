@@ -210,6 +210,8 @@ services:
     environment:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379/0
+      CRAWL_INTERVAL_SECONDS: "60"
+      LOG_LEVEL: "DEBUG"
       NEWS_RAW_TOPIC: news_raw
       OLLAMA_API_URL: ${OLLAMA_API_URL}
       MONGO_URL: "mongodb://mongo-crawler:27017"
@@ -257,9 +259,9 @@ services:
       KAFKA_BROKERS: kafka:9092
       NEWS_RAW_TOPIC: news_raw
       NEWS_ANALYZED_TOPIC: news_analyzed
-      KAFKA_GROUP: ai-service-group-dl-v1
+      KAFKA_GROUP: ai-service-group-dl-v2
       AI_INSIGHTS_TOPIC: ai_insights
-      MARKET_DATA_TOPIC: market_data
+      MARKET_DATA_TOPIC: market.prices
 
       # Deep Learning Config
       MODEL_PATH: "/app/models/lstm_sentiment_hybrid_v1.pth"
@@ -273,6 +275,7 @@ services:
       # Settings
       PREDICTION_INTERVAL_SEC: "60"
       MAX_NEWS_BUFFER: "5000"
+      DEBUG_MARKET_CACHE: "true"
     volumes:
       - ./services/ai-service:/app
       - ./ml_models:/app/models

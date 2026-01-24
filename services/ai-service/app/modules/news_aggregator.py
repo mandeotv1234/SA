@@ -41,6 +41,11 @@ _seen_urls: set = set()
 _buffer_lock = threading.Lock()
 _scheduler_running = False
 _last_prediction_time: float = 0
+_last_result: Dict = None
+
+def get_last_result() -> Dict:
+    global _last_result
+    return _last_result if _last_result else {"status": "no_prediction_yet"}
 
 
 def add_news(news_payload: Dict) -> bool:
@@ -114,25 +119,54 @@ def run_scheduled_prediction() -> Dict:
             
             if pred:
                 predictions.append(pred)
-                icon = '🚀' if pred['direction'] == 'UP' else '📉'
-                print(f"  {icon} {symbol}: {pred['direction']} (Conf: {pred['confidence']:.2f})")
-                print(f"     Reason: {pred['reason']}")
+                
+                # Extract 1h forecast for logging
+                forecast_1h = pred.get('forecast', {}).get('next_1h', {})
+                direction = forecast_1h.get('direction', 'SIDEWAYS')
+                confidence = forecast_1h.get('confidence', 0)
+                reason_short = pred.get('causal_analysis', {}).get('explanation_vi', '')[:100]
+                
+                icon = '🚀' if direction == 'UP' else ('📉' if direction == 'DOWN' else '➡️')
+                print(f"  {icon} {symbol}: {direction} (Conf: {confidence}%)")
+                print(f"     Causal: {reason_short}...")
             else:
                 print(f"  [WARN] Skipping {symbol} - insufficient data")
                 
         except Exception as e:
             print(f"  [ERROR] Failed for {symbol}: {e}")
 
-    # Construct final result
+    # Calculate overall market sentiment score
+    sentiment_score = 0
+    valid_preds = 0
+    for p in predictions:
+        f1h = p.get('forecast', {}).get('next_1h', {})
+        d = f1h.get('direction')
+        c = f1h.get('confidence', 0)
+        if d == 'UP': sentiment_score += (c/100)
+        elif d == 'DOWN': sentiment_score -= (c/100)
+        valid_preds += 1
+    
+    avg_sentiment = sentiment_score / valid_preds if valid_preds > 0 else 0
+    sentiment_label = "NEUTRAL"
+    if avg_sentiment > 0.2: sentiment_label = "BULLISH"
+    elif avg_sentiment < -0.2: sentiment_label = "BEARISH"
+
+    # Construct final result matching the detailed requested format
     result_payload = {
-        "type": "aggregated_prediction",
-        "analyzed_articles": len(news_list),
-        "symbols_analyzed": ALL_SYMBOLS,
-        "market_sentiment": "NEUTRAL",  # Can derive from avg predictions
-        "analysis_summary": f"Deep Learning analysis of {len(news_list)} news items and market trends.",
-        "predictions": predictions,
-        "timestamp": time.time()
+        "meta": {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "model_version": "hybrid_lstm_finbert_v2",
+            "market_sentiment_score": round(avg_sentiment, 2),
+            "market_sentiment_label": sentiment_label,
+            "engine": "Dual-Stream Deep Learning",
+            "analyzed_articles": len(news_list)
+        },
+        "predictions": predictions
     }
+
+    # Save to global state
+    global _last_result
+    _last_result = result_payload
 
     # Publish to Kafka
     try:

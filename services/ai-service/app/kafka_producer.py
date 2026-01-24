@@ -54,8 +54,15 @@ def produce_news_analyzed(data: dict, flush: bool = False):
 
 def produce_ai_insight(data: dict, flush: bool = False):
     try:
-        producer.produce(AI_INSIGHTS_TOPIC, json.dumps(data, ensure_ascii=False).encode("utf-8"), callback=_delivery)
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        producer.produce(AI_INSIGHTS_TOPIC, payload, callback=_delivery)
         producer.poll(0)
+        
+        # Log summary of what was published
+        meta = data.get('meta', {})
+        predictions_count = len(data.get('predictions', []))
+        print(f"[KAFKA-PUBLISH] Sent prediction to '{AI_INSIGHTS_TOPIC}': {predictions_count} symbols, sentiment={meta.get('market_sentiment_label', 'N/A')}")
+        
     except Exception:
         LOG.exception("Failed producing ai_insight")
         raise

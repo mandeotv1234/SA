@@ -39,6 +39,13 @@ def health():
     return {"alive": True}
 
 
+@app.get('/predictions/latest')
+def get_latest_prediction():
+    """Get the latest Deep Learning prediction result."""
+    from app.modules.news_aggregator import get_last_result
+    return get_last_result()
+
+
 @app.get('/debug/market_cache/{symbol}')
 def debug_market_cache(symbol: str):
     """Return recent cached candles for a symbol (oldest->newest). Dev-only endpoint."""
