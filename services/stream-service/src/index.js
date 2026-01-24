@@ -2,31 +2,52 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const { createClient } = require('redis');
-const { initConsumer } = require('./kafkaConsumer');
+const { initConsumer, getSequenceCounter, cleanup } = require('./kafkaConsumer');
 
 const PORT = process.env.PORT || 3000;
 const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
 
-// Optimized HTTP Server
+let isShuttingDown = false;
+let connectionCount = 0;
+let messageCount = 0;
+let startTime = Date.now();
+
+// Enhanced HTTP Server with detailed health check
 const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end('{"alive": true, "role": "gateway"}');
+    const status = isShuttingDown ? 503 : 200;
+    const health = {
+      alive: !isShuttingDown,
+      status: isShuttingDown ? 'shutting_down' : 'healthy',
+      connections: connectionCount,
+      messages_processed: messageCount,
+      sequence_counter: getSequenceCounter(),
+      uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+      memory_usage: {
+        rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+        heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+      },
+      timestamp: new Date().toISOString()
+    };
+
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(health, null, 2));
     return;
   }
+
   res.writeHead(404);
-  res.end();
+  res.end('Not Found');
 });
 
 async function start() {
-  // 1. Setup Redis Adapter for Horizontal Scaling (Socket.IO coordination)
+  // Setup Redis Adapter
   const pubClient = createClient({ url: REDIS_URL });
   const subClient = pubClient.duplicate();
 
   try {
     await pubClient.connect();
     await subClient.connect();
-    console.log('Redis connected for Socket.IO adapter');
+    console.log('Redis adapter connected');
   } catch (err) {
     console.error('Redis connection failed:', err);
     process.exit(1);
@@ -41,39 +62,31 @@ async function start() {
     adapter: createAdapter(pubClient, subClient)
   });
 
-  // 2. Start Kafka Consumer (Receives Prices & Events -> Broadcasts to Sockets)
-  try {
-    await initConsumer(io);
-  } catch (e) {
-    console.error("Kafka Gateway init failed", e);
-  }
-
+  // Connection tracking
   io.on('connection', (socket) => {
-    console.log(`[CONNECTION] New client connected: ${socket.id}`);
+    connectionCount++;
+    console.log(`[CONNECTION] Client connected: ${socket.id}. Total: ${connectionCount}`);
 
-    // Optional monitoring log
-    const clientsCount = io.engine.clientsCount;
-    if (clientsCount % 100 === 0 || clientsCount < 10) {
-      console.log(`[MONITOR] Total clients connected: ${clientsCount}`);
-    }
-
-    // Client subscribes to a specific symbol (Price Feed)
+    // Subscribe to symbols
     socket.on('subscribe', (symbol) => {
-      console.log(`[SUBSCRIBE] Received subscribe event from ${socket.id} for: ${symbol}`);
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
         socket.join(room);
-        console.log(`[SUBSCRIBE] ✅ Client ${socket.id} joined room: ${room}`);
 
-        // Log current room members
+        // Also join interval-specific rooms
+        const intervals = ['1M', '5M', '15M', '1H'];
+        intervals.forEach(interval => {
+          socket.join(`${room}_${interval}`);
+        });
+
+        console.log(`[SUBSCRIBE] Client ${socket.id} joined room: ${room}`);
+
         const roomSize = io.sockets.adapter.rooms.get(room)?.size || 0;
         console.log(`[SUBSCRIBE] Room ${room} now has ${roomSize} client(s)`);
-      } else {
-        console.log(`[SUBSCRIBE] ❌ Invalid symbol received: ${symbol}`);
       }
     });
 
-    // Client joins their personal room (User Notifications)
+    // Join user room for notifications
     socket.on('join_user_room', (userId) => {
       if (userId && typeof userId === 'string') {
         socket.join(`user_${userId}`);
@@ -85,27 +98,72 @@ async function start() {
       if (symbol && typeof symbol === 'string') {
         const room = symbol.toUpperCase();
         socket.leave(room);
+
+        // Also leave interval-specific rooms
+        const intervals = ['1M', '5M', '15M', '1H'];
+        intervals.forEach(interval => {
+          socket.leave(`${room}_${interval}`);
+        });
+
         console.log(`[UNSUBSCRIBE] Client ${socket.id} left room: ${room}`);
       }
     });
 
     socket.on('disconnect', (reason) => {
-      console.log(`[DISCONNECT] Client ${socket.id} disconnected. Reason: ${reason}`);
+      connectionCount--;
+      console.log(`[DISCONNECT] Client ${socket.id} disconnected. Reason: ${reason}. Total: ${connectionCount}`);
     });
   });
 
-  httpServer.listen(PORT, () => console.log(`Stream Gateway running on port ${PORT}`));
+  // Start Kafka Consumer
+  try {
+    await initConsumer(io);
+  } catch (e) {
+    console.error('Kafka Consumer init failed', e);
+  }
 
+  // Graceful shutdown
   const shutdown = async () => {
-    console.log('Shutting down Gateway...');
+    console.log('Graceful shutdown initiated...');
+    isShuttingDown = true;
+
+    // 1. Stop accepting new connections
+    httpServer.close();
+
+    // 2. Notify all clients
+    io.emit('server_shutdown', {
+      reason: 'maintenance',
+      message: 'Server đang bảo trì, vui lòng kết nối lại sau 5 giây',
+      reconnectAfter: 5000
+    });
+
+    console.log('Notified all clients about shutdown');
+
+    // 3. Wait for clients to disconnect gracefully
+    console.log('Waiting 10s for clients to disconnect...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+
+    // 4. Force close remaining connections
+    console.log(`Closing remaining ${connectionCount} connections...`);
     io.close();
+
+    // 5. Cleanup Kafka and Redis
+    await cleanup();
     await pubClient.disconnect();
     await subClient.disconnect();
+
+    console.log('Shutdown complete');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+
+  httpServer.listen(PORT, () => {
+    console.log(`Stream Service running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`Instance ID: ${process.env.HOSTNAME || 'local'}`);
+  });
 }
 
-start();
+start().catch(console.error);
