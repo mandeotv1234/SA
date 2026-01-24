@@ -9,7 +9,7 @@ from confluent_kafka import Consumer
 # Keeps recent 1m candles per symbol in a deque for fast lookup by ai-service.
 
 KAFKA_BROKER = os.getenv("KAFKA_BROKERS", "localhost:9092")
-MARKET_TOPIC = os.getenv("MARKET_DATA_TOPIC", "market_data")
+MARKET_TOPIC = os.getenv("MARKET_DATA_TOPIC", "market.prices")  # Match stream-ingester topic
 GROUP_ID = os.getenv("MARKET_CACHE_GROUP", "ai-service-market-cache-v3")
 MAX_PER_SYMBOL = int(os.getenv("MARKET_CACHE_MAX", "2000"))
 

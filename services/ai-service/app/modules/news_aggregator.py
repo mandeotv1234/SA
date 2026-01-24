@@ -185,7 +185,7 @@ def _scheduler_loop():
     print(f"[SCHEDULER] Started - DL prediction every {PREDICTION_INTERVAL_SEC}s")
     print(f"[SCHEDULER] First run in 30 seconds...")
     
-    time.sleep(30)
+    time.sleep(5)
     
     while _scheduler_running:
         try:

@@ -26,10 +26,12 @@ if RAW_TOPIC and RAW_TOPIC not in TOPICS:
 if not TOPICS:
     TOPICS = ["news_analyzed"]
 
+TOPICS.append("investment.analysis.request")
+
 consumer_conf = {
     "bootstrap.servers": KAFKA_BROKER,
     "group.id": GROUP,
-    "auto.offset.reset": "earliest"
+    "auto.offset.reset": "latest"  # Only consume NEW messages, skip historical data
 }
 
 
@@ -62,8 +64,8 @@ def start_consumer():
             poll_count += 1
             
             # Log polling activity every 60 seconds
-            if poll_count % 60 == 0:
-                print(f"[CONSUMER-HEARTBEAT] Polled {poll_count} times, received {message_count} messages")
+            # if poll_count % 60 == 0:
+            #     print(f"[CONSUMER-HEARTBEAT] Polled {poll_count} times, received {message_count} messages")
             
             if msg is None:
                 continue
@@ -77,25 +79,45 @@ def start_consumer():
             
             # Parse message
             payload = msg.value().decode("utf-8")
-            print(f"[NEWS-RECEIVED] Raw message from topic {msg.topic()}, partition {msg.partition()}, offset {msg.offset()}")
             
             try:
                 j = json.loads(payload)
             except Exception as e:
-                print(f"[JSON ERROR] {e}")
+                print(f"[JSON ERROR] Failed to parse message: {e}")
                 continue
             
             message_count += 1
+            
+            # Handle Investment Analysis Request
+            if msg.topic() == "investment.analysis.request":
+                try:
+                    from app.modules.investment_advisor import analyze_investment
+                    from app.kafka_producer import produce_investment_result
+                    
+                    print(f"[KAFKA] Investment Analysis Request for {j.get('symbol')}")
+                    
+                    # Analyze
+                    advice_result = analyze_investment(j)
+                    # Merge original request data for correlation (specifically requestId)
+                    # We merge the result INTO the request data (or vice versa) to ensure requestId is passed back
+                    final_result = {**j, **advice_result} 
+                    
+                    # Publish Result
+                    produce_investment_result(final_result)
+                    print(f"[KAFKA] Sent Investment Analysis Result for {j.get('symbol')}")
+                    
+                except Exception as e:
+                    print(f"[KAFKA ERROR] Investment analysis failed: {e}")
+                continue
+
             title = j.get("title") or ""
-            print(f"[NEWS-PARSED] Title: {title[:80]}... | Relevance: {j.get('relevance_score', 'N/A')} | Category: {j.get('category', 'N/A')}")
             
             # Quick relevance check
             relevance = float(j.get('relevance_score') or 0.5)
             category = j.get('category', 'General')
             
             if relevance < 0.3 and category not in ['Finance', 'Economy', 'Policy', 'Crypto', 'Market']:
-                print(f"[NEWS-FILTERED] Skipped due to low relevance ({relevance}) and category ({category})")
-                continue  # Skip low relevance
+                continue  # Skip low relevance silently
             
             # Add sentiment if not present
             if not (j.get('sentiment_label') or j.get('sentiment_score')):
@@ -150,13 +172,11 @@ def start_consumer():
             # Add to buffer (prediction runs on schedule)
             result = process_news(out)
             
-            if result.get("status") == "duplicate":
-                print(f"[NEWS-DUPLICATE] Already seen: {title[:60]}...")
-            else:
-                # New article added
+            if result.get("status") != "duplicate":
+                # New article added - only log new articles
                 buffer_size = result.get("buffer_size", 0)
-                print(f"[NEWS-BUFFERED] ✓ Added to buffer (total: {buffer_size}): {title[:60]}...")
-                if buffer_size % 10 == 0:  # Summary every 10 articles
+                print(f"[NEWS-BUFFERED] ✓ New article (total: {buffer_size}): {title[:80]}...")
+                if buffer_size % 5 == 0:  # Summary every 5 articles
                     print(f"[BUFFER-STATUS] {buffer_size} articles ready for next prediction cycle")
                 
     except KeyboardInterrupt:

@@ -1,7 +1,7 @@
 const kafka = require('../config/kafka');
 const db = require('../config/db');
 
-const groupId = process.env.AI_INSIGHTS_CONSUMER_GROUP_ID || 'core-service-ai-insights-consumer';
+const groupId = process.env.AI_INSIGHTS_CONSUMER_GROUP_ID || 'core-service-ai-insights-consumer-v3';
 const consumer = kafka.consumer({ groupId });
 
 const TOPIC = process.env.AI_INSIGHTS_TOPIC || 'ai_insights';
@@ -9,7 +9,7 @@ const TOPIC = process.env.AI_INSIGHTS_TOPIC || 'ai_insights';
 const run = async () => {
   await consumer.connect();
   console.log('AiInsightsConsumer connected, subscribing to', TOPIC);
-  await consumer.subscribe({ topic: TOPIC, fromBeginning: true });
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
 
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {

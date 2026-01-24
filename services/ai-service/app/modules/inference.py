@@ -55,7 +55,7 @@ class InferenceEngine:
         if candles:
              current_price = float(candles[-1]['close'])
 
-        if not candles or len(candles) < 30: # Relaxed threshold for testing
+        if not candles or len(candles) < 10: # Relaxed threshold for testing
             logger.warning(f"Not enough candles for {symbol}. Got {len(candles)}")
             # Mock data if really needed or return None. 
             # For now return None to force backfill attention.
@@ -136,6 +136,20 @@ class InferenceEngine:
                 mask = (news_df['timestamp'] >= top_candle_time) & (news_df['timestamp'] < top_candle_time + pd.Timedelta(minutes=60)) # widen window
                 relevant_news = news_df[mask]
                 
+                # FALLBACK: If no news in attention window, use LATEST news
+                # This ensures we always have something to explain if news exists
+                if relevant_news.empty and not news_df.empty:
+                    # Sort by timestamp desc
+                    relevant_news = news_df.sort_values('timestamp', ascending=False).head(3)
+                
+                # Filter by symbol relevance if possible
+                # Simple keyword match in title
+                symbol_base = symbol.replace('USDT', '').replace('BTC', 'Bitcoin').replace('ETH', 'Ethereum')
+                
+                symbol_news = relevant_news[relevant_news['title'].str.contains(symbol_base, case=False, na=False)]
+                if not symbol_news.empty:
+                    relevant_news = symbol_news
+
                 if not relevant_news.empty:
                     top_article = relevant_news.iloc[0]
                     top_news_item = {
@@ -149,7 +163,7 @@ class InferenceEngine:
                         top_sources.append({
                             "title": row['title'],
                             "source": row['source'],
-                            "impact_score": round(abs(row['sentiment_score'] * (top_prob * 10)), 2) # Synthetic impact score
+                            "impact_score": round(abs(row['sentiment_score'] * (top_prob * 10)) + 0.1, 2) # Synthetic impact score
                         })
 
         # 7. Construct Rich Forecast
@@ -241,12 +255,14 @@ class InferenceEngine:
         """
         
         try:
-            response = self.ollama_client.generate(prompt)
-            if response:
-                import json
-                # Clean response (sometimes Ollama adds Markdown blocks)
-                clean_json = response.replace("```json", "").replace("```", "").strip()
-                return json.loads(clean_json)
+            api_result = self.ollama_client.generate(prompt)
+            if api_result:
+                response = self.ollama_client.extract_response(api_result)
+                if response:
+                    import json
+                    # Clean response (sometimes Ollama adds Markdown blocks)
+                    clean_json = response.replace("```json", "").replace("```", "").strip()
+                    return json.loads(clean_json)
         except Exception as e:
             logger.error(f"Ollama generation failed: {e}")
             

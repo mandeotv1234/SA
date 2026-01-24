@@ -28,19 +28,25 @@ export default function Watchlist() {
             const timeframe = TIMEFRAMES.find(tf => tf.value === selectedTimeframe);
             if (!timeframe) return;
 
+            // Choose appropriate interval based on timeframe to ensure data exists (backfill limitations)
+            let fetchInterval = '1m';
+            if (['1d', '1w'].includes(selectedTimeframe)) fetchInterval = '1h';
+            else if (['4h', '1h'].includes(selectedTimeframe)) fetchInterval = '5m';
+
             const now = Math.floor(Date.now() / 1000);
             const oldTime = now - timeframe.seconds;
 
             const prices = {};
-            
+
             // Fetch old price for each symbol
             for (const symbol of supportedSymbols) {
                 try {
-                    const url = `/v1/klines?symbol=${symbol}&limit=1&interval=1m&end=${oldTime}`;
+                    const url = `/v1/klines?symbol=${symbol}&limit=1&interval=${fetchInterval}&end=${oldTime}`;
                     const res = await authFetch(url);
                     if (res.ok) {
                         const data = await res.json();
                         if (data && data.length > 0) {
+                            // Use close price of the candle nearest to oldTime
                             prices[symbol] = parseFloat(data[0].close);
                         }
                     }
@@ -50,7 +56,7 @@ export default function Watchlist() {
             }
 
             setOldPrices(prices);
-            console.log(`[Watchlist] Fetched old prices for ${selectedTimeframe}:`, prices);
+            console.log(`[Watchlist] Fetched old prices for ${selectedTimeframe} (int: ${fetchInterval}):`, prices);
         };
 
         fetchOldPrices();
@@ -69,7 +75,7 @@ export default function Watchlist() {
         const socketUrl = `${wsBase}?token=${encodeURIComponent(token)}`;
 
         const socket = io(socketUrl, {
-            path: '/socket.io',
+            path: '/stream-api/socket.io',
             transports: ['websocket'],
             reconnectionDelay: 1000,
             reconnectionAttempts: 10
@@ -87,7 +93,7 @@ export default function Watchlist() {
             if (msg && msg.symbol && msg.kline) {
                 const symbol = msg.symbol.toUpperCase();
                 const price = parseFloat(msg.kline.c || msg.kline.close);
-                
+
                 // Update current price
                 setCurrentPrices(prev => ({
                     ...prev,
@@ -157,13 +163,13 @@ export default function Watchlist() {
                 {filtered.map(symbol => {
                     const currentPrice = currentPrices[symbol];
                     const oldPrice = oldPrices[symbol];
-                    
+
                     // Calculate % change
                     let change = null;
                     if (currentPrice && oldPrice && oldPrice !== currentPrice) {
                         change = ((currentPrice - oldPrice) / oldPrice) * 100;
                     }
-                    
+
                     const isUp = change !== null && change >= 0;
                     const isSelected = symbol === currentSymbol;
 
@@ -192,14 +198,14 @@ export default function Watchlist() {
                                         {currentPrice.toFixed(currentPrice < 10 ? 4 : 2)}
                                     </div>
                                     {change !== null ? (
-                                        <div style={{ 
-                                            fontSize: 11, 
+                                        <div style={{
+                                            fontSize: 11,
                                             fontWeight: 'bold',
-                                            color: isUp ? '#26a69a' : '#ef5350', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            justifyContent: 'flex-end', 
-                                            gap: 2 
+                                            color: isUp ? '#26a69a' : '#ef5350',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'flex-end',
+                                            gap: 2
                                         }}>
                                             {isUp ? '▲' : '▼'}
                                             {Math.abs(change).toFixed(2)}%

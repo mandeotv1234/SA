@@ -85,3 +85,28 @@ def causal_for_news(payload: dict):
         return {"status": "ok", "insight": res}
     except Exception as e:
         return {"status": "error", "reason": str(e)}
+
+
+@app.get('/debug/buffer-status')
+def get_buffer_status():
+    """Get current news buffer status."""
+    from app.modules.news_aggregator import get_buffer_status
+    return get_buffer_status()
+
+
+@app.post('/debug/reset-buffer')
+def reset_news_buffer():
+    """Reset the news buffer and seen URLs. Use this to clear duplicate detection."""
+    from app.modules.news_aggregator import reset_buffer
+    reset_buffer()
+    return {"status": "ok", "message": "News buffer and seen URLs cleared"}
+
+
+@app.post('/internal/analyze-investment')
+def api_analyze_investment(payload: dict):
+    """
+    Internal API for Investment Service to get specific advice.
+    Payload: { symbol, amount, buy_price, target_sell_time, current_time }
+    """
+    from app.modules.investment_advisor import analyze_investment
+    return analyze_investment(payload)

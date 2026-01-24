@@ -13,14 +13,14 @@ export default function Navbar() {
                     <Activity className="brand-icon" />
                     <span>TradeAI</span>
                 </div>
-                <SymbolSelector />
+                {/* <SymbolSelector />
                 <div className="nav-separator"></div>
                 <button className="timeframe-btn">1D</button>
                 <button className="timeframe-btn">5D</button>
                 <button className="timeframe-btn">1M</button>
                 <button className="timeframe-btn">3M</button>
                 <button className="timeframe-btn">6M</button>
-                <button className="timeframe-btn active">1Y</button>
+                <button className="timeframe-btn active">1Y</button> */}
             </div>
 
             <div className="nav-right">
