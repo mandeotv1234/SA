@@ -22,7 +22,7 @@ services:
           claims_to_verify: ["exp"]
 
   - name: stream-service
-    url: "http://stream-service:3000"
+    url: "http://haproxy:8005"
     routes:
       - name: socketio-route
         paths: ["/socket.io"]

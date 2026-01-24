@@ -104,3 +104,103 @@ exports.getKlines = async (req, res) => {
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
+// Missed Data Recovery API - for gap detection and recovery
+exports.getMissedKlines = async (req, res) => {
+  try {
+    const { symbol, fromSeq, toSeq, limit = 100 } = req.query;
+
+    // Validation
+    if (!symbol) {
+      return res.status(400).json({
+        error: 'Symbol is required'
+      });
+    }
+
+    if (!fromSeq || !toSeq) {
+      return res.status(400).json({
+        error: 'fromSeq and toSeq are required'
+      });
+    }
+
+    const fromSequence = parseInt(fromSeq);
+    const toSequence = parseInt(toSeq);
+    const maxLimit = Math.min(parseInt(limit), 1000); // Max 1000 records
+
+    if (isNaN(fromSequence) || isNaN(toSequence)) {
+      return res.status(400).json({
+        error: 'fromSeq and toSeq must be valid numbers'
+      });
+    }
+
+    if (fromSequence >= toSequence) {
+      return res.status(400).json({
+        error: 'fromSeq must be less than toSeq'
+      });
+    }
+
+    if (toSequence - fromSequence > maxLimit) {
+      return res.status(400).json({
+        error: `Range too large. Maximum ${maxLimit} records allowed`
+      });
+    }
+
+    // Query missed klines from database
+    const query = `
+      SELECT 
+        sequence,
+        symbol,
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume
+      FROM market_klines 
+      WHERE symbol = $1 
+        AND sequence > $2 
+        AND sequence <= $3
+        AND sequence IS NOT NULL
+      ORDER BY sequence ASC
+      LIMIT $4
+    `;
+
+    const result = await db.query(query, [
+      symbol.toUpperCase(),
+      fromSequence,
+      toSequence,
+      maxLimit
+    ]);
+
+    // Transform to frontend format matching WebSocket message structure
+    const klines = result.rows.map(row => ({
+      seq: row.sequence,
+      symbol: row.symbol,
+      timestamp: new Date(row.time).getTime(),
+      kline: {
+        t: new Date(row.time).getTime(),
+        T: new Date(row.time).getTime() + 60000, // Add 1 minute for close time
+        s: row.symbol,
+        o: parseFloat(row.open),
+        h: parseFloat(row.high),
+        l: parseFloat(row.low),
+        c: parseFloat(row.close),
+        v: parseFloat(row.volume || 0)
+      }
+    }));
+
+    res.json({
+      symbol: symbol.toUpperCase(),
+      fromSeq: fromSequence,
+      toSeq: toSequence,
+      count: klines.length,
+      data: klines
+    });
+
+  } catch (error) {
+    console.error('Error fetching missed klines:', error);
+    res.status(500).json({
+      error: 'Internal server error'
+    });
+  }
+};

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { io } from 'socket.io-client';
+import GapDetector from './utils/GapDetector';
+import GapRecovery from './utils/GapRecovery';
 
 const getGatewayUrl = () => {
   if (import.meta.env.VITE_API_URL) {
@@ -45,6 +47,11 @@ const useStore = create((set, get) => ({
   user: null, // Add user state
   currentSymbol: 'BTCUSDT',
 
+  // Gap detection state
+  isRecovering: false,
+  gapStats: {},
+  recoveryProgress: null,
+
   // Helper to decode token
   decodeUser: (token) => {
     try {
@@ -78,6 +85,74 @@ const useStore = create((set, get) => ({
   setIsVip: (isVip) => {
     localStorage.setItem('isVip', String(isVip));
     set({ isVip: !!isVip });
+  },
+
+  // Process message with gap detection
+  processMessageWithGapDetection: async (msg, onMessage, isRecovered = false) => {
+    if (!msg || !msg.symbol || !msg.seq) {
+      console.warn('[Store] Invalid message:', msg);
+      return;
+    }
+
+    const symbol = msg.symbol.toUpperCase();
+
+    // Detect gaps for live messages only
+    if (!isRecovered) {
+      const gap = GapDetector.detectGap(symbol, msg.seq);
+
+      if (gap) {
+        console.warn(`[Store] Gap detected for ${symbol}:`, gap);
+
+        // Recover gap asynchronously
+        set({ isRecovering: true });
+
+        try {
+          await GapRecovery.recoverGap(
+            gap,
+            get().token,
+            (recoveredMsg) => {
+              // Process recovered message
+              if (onMessage) onMessage(recoveredMsg, true);
+            },
+            (progress) => {
+              set({ recoveryProgress: progress });
+            }
+          );
+
+          // Update gap stats
+          const stats = GapDetector.getStats(symbol);
+          set((state) => ({
+            gapStats: { ...state.gapStats, [symbol]: stats }
+          }));
+        } catch (error) {
+          console.error('[Store] Gap recovery failed:', error);
+        } finally {
+          set({ isRecovering: false, recoveryProgress: null });
+        }
+      }
+
+      // Update last seen sequence
+      GapDetector.setLastSeq(symbol, msg.seq);
+    }
+
+    // Process current message
+    if (onMessage) onMessage(msg, isRecovered);
+  },
+
+  // Get gap statistics for a symbol
+  getGapStats: (symbol) => {
+    return GapDetector.getStats(symbol);
+  },
+
+  // Clear gap tracking for a symbol
+  clearGapTracking: (symbol) => {
+    GapDetector.clearSeq(symbol);
+    GapDetector.clearStats(symbol);
+    set((state) => {
+      const newStats = { ...state.gapStats };
+      delete newStats[symbol];
+      return { gapStats: newStats };
+    });
   },
 
   // call init on create

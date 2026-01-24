@@ -66,6 +66,25 @@ services:
       timeout: 5s
       retries: 5
 
+  haproxy:
+    image: haproxy:2.8
+    container_name: haproxy
+    ports:
+      - "8005:8005"
+      - "8404:8404"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      stream-service:
+        condition: service_healthy
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   kong:
     image: kong/kong-gateway:3.6
     container_name: kong
@@ -85,6 +104,8 @@ services:
     depends_on:
       kong-init:
         condition: service_completed_successfully
+      haproxy:
+        condition: service_started
 
   kong-init:
     image: python:3.11-slim
@@ -158,18 +179,25 @@ services:
       context: ./services/stream-service
     environment:
       KAFKA_BROKERS: kafka:9092
+      REDIS_URL: redis://redis:6379
       SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt"
       SEND_PARTIAL: "true"
-    ports:
-      - "3002-3005:3000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./services/stream-service:/app
       - /app/node_modules
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 6
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    deploy:
+      replicas: 3
     logging:
       driver: "json-file"
       options:
