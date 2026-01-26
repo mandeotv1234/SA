@@ -180,7 +180,7 @@ services:
     environment:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
       SEND_PARTIAL: "true"
     depends_on:
       kafka:
@@ -192,9 +192,9 @@ services:
       - /app/node_modules
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: 3s # Faster detection for consistent hashing
+      timeout: 2s # Reduced timeout
+      retries: 3 # Fail fast to trigger rehashing
       start_period: 30s
     deploy:
       replicas: 3
@@ -297,7 +297,7 @@ services:
       context: ./services/stream-ingester
     environment:
       KAFKA_BROKERS: kafka:9092
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
     depends_on:
       kafka:
         condition: service_healthy

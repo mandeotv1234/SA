@@ -6,6 +6,7 @@ const { initConsumer, getSequenceCounter, cleanup } = require('./kafkaConsumer')
 
 const PORT = process.env.PORT || 3000;
 const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
+const INSTANCE_ID = process.env.HOSTNAME || `instance-${Math.random().toString(36).substr(2, 9)}`;
 
 let isShuttingDown = false;
 let connectionCount = 0;
@@ -17,6 +18,7 @@ const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
     const status = isShuttingDown ? 503 : 200;
     const health = {
+      instance_id: INSTANCE_ID,
       alive: !isShuttingDown,
       status: isShuttingDown ? 'shutting_down' : 'healthy',
       connections: connectionCount,
@@ -62,10 +64,11 @@ async function start() {
     adapter: createAdapter(pubClient, subClient)
   });
 
-  // Connection tracking
+  // Connection tracking with hash key logging
   io.on('connection', (socket) => {
     connectionCount++;
-    console.log(`[CONNECTION] Client connected: ${socket.id}. Total: ${connectionCount}`);
+    const hashKey = socket.handshake.query.token || 'no-token';
+    console.log(`[CONNECTION] Client ${socket.id} with hash_key: ${hashKey.substring(0, 20)}... -> Instance: ${INSTANCE_ID}. Total: ${connectionCount}`);
 
     // Subscribe to symbols
     socket.on('subscribe', (symbol) => {
@@ -162,7 +165,8 @@ async function start() {
   httpServer.listen(PORT, () => {
     console.log(`Stream Service running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Instance ID: ${process.env.HOSTNAME || 'local'}`);
+    console.log(`Instance ID: ${INSTANCE_ID}`);
+    console.log(`Consistent Hashing: Enabled (hash key: JWT token)`);
   });
 }
 

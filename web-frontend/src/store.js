@@ -76,7 +76,7 @@ const useStore = create((set, get) => ({
   price: null,
   socket: null,
   marketState: {},
-  supportedSymbols: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT'],
+  supportedSymbols: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'POLUSDT'],
 
   setSymbol: (symbol) => {
     set({ currentSymbol: symbol, price: null });
