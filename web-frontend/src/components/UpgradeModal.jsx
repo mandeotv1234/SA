@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Copy, Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
 import useStore from '../store';
+import { useToast } from './ToastProvider';
 
 const MY_BANK = {
     BANK_ID: "MBBank",
@@ -14,6 +15,7 @@ const POLL_INTERVAL = 3000; // 3 seconds
 
 export default function UpgradeModal({ onClose }) {
     const { token, isVip, setIsVip, authFetch } = useStore();
+    const { showToast } = useToast();
     const [step, setStep] = useState(1);
     const [userId, setUserId] = useState(null);
     const [loadingCode, setLoadingCode] = useState(true);
@@ -75,7 +77,7 @@ export default function UpgradeModal({ onClose }) {
 
     const copyToClipboard = (text) => {
         navigator.clipboard.writeText(text);
-        alert('Copied to clipboard!');
+        showToast('Copied to clipboard!', 'success');
     };
 
     const formatTime = (ms) => {

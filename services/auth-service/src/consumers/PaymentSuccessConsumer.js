@@ -1,5 +1,6 @@
 const { Kafka } = require('kafkajs');
 const { pool } = require('../db');
+const sseService = require('../services/sseService');
 
 const BROKERS = (process.env.KAFKA_BROKERS || 'kafka:9092')
     .split(',')
@@ -42,7 +43,14 @@ const run = async () => {
                     if (res.rowCount > 0) {
                         console.log(`✅ User ${payload.userId} upgraded to VIP successfully!`);
 
-                        // Publish event for Stream Service (Socket.IO)
+                        // The local import of sseService is redundant as it's already imported globally.
+                        // const sseService = require('../services/sseService'); // This line is removed as per instruction interpretation.
+
+                        // Send SSE event
+                        sseService.sendEvent(payload.userId, 'vip_update', { isVip: true });
+                        console.log(`SSE Sent: vip_update for ${payload.userId}`);
+
+                        // Publish event for Stream Service (Socket.IO) - Optional if we strictly use SSE
                         await producer.send({
                             topic: 'user.events',
                             messages: [

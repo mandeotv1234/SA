@@ -98,7 +98,7 @@ TIN TỨC:
 {news_text}
 
 YÊU CẦU BẮT BUỘC:
-1. Phải dự đoán đầy đủ cho 10 coins: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, DOTUSDT, MATICUSDT
+1. Phải dự đoán đầy đủ cho 10 coins: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, DOTUSDT, POLUSDT
 2. Mỗi coin cần có:
    - direction: "UP" hoặc "DOWN" hoặc "NEUTRAL"
    - change_percent: số thực (ví dụ: 2.5 hoặc -1.8)
@@ -121,7 +121,7 @@ TRẢ VỀ JSON (KHÔNG KÈM TEXT):
     {{"symbol": "ADAUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
     {{"symbol": "AVAXUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
     {{"symbol": "DOTUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}},
-    {{"symbol": "MATICUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}}
+    {{"symbol": "POLUSDT", "direction": "...", "change_percent": 0.0, "confidence": 0.0, "reason": "...", "causal_factor": "..."}}
   ],
   "key_factors": ["Yếu tố 1", "Yếu tố 2"],
   "risks": ["Rủi ro 1"]

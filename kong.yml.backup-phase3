@@ -1,41 +1,43 @@
 _format_version: "2.1"
-_transform: true
 
-# SỬA Ở ĐÂY: Dùng "services" thay vì "_services"
-services:
+# 1. Định nghĩa Services và Routes
+_services:
+  # Auth Service: Không cần bảo vệ bằng JWT (để user còn login)
   - name: auth-service
     url: "http://auth-service:8080"
     routes:
       - name: auth-route
         paths: ["/auth"]
-        strip_path: false
+        strip_path: false # Giữ nguyên /auth khi gọi xuống service
 
+  # Core Service: Bảo vệ bằng JWT
   - name: core-service
     url: "http://core-service:3000"
     routes:
       - name: api-route
         paths: ["/api"]
-        strip_path: true
+        strip_path: true # Gọi /api/users -> xuống service là /users
     plugins:
       - name: jwt
         config:
-          claims_to_verify: ["exp"]
+          # Kong sẽ tìm credential khớp với trường 'iss' (issuer) trong token hoặc mặc định
+          claims_to_verify: ["exp"] 
 
+  # Stream Service (Socket.IO): Bảo vệ bằng JWT
   - name: stream-service
-    url: "http://haproxy:8005"
+    url: "http://stream-service:3000"
     routes:
       - name: socketio-route
         paths: ["/socket.io"]
-        strip_path: false
-      - name: stream-api-route
-        paths: ["/stream-api"]
-        strip_path: true
+        strip_path: false # Socket.IO cần đúng path này
     plugins:
       - name: jwt
         config:
           claims_to_verify: ["exp"]
-          uri_param_names: ["token"]
+          # Cho phép đọc token từ query param ?token=... (cần thiết cho Websocket handshake)
+          uri_param_names: ["token"] 
 
+  # Investment Service: Bảo vệ bằng JWT
   - name: investment-service
     url: "http://investment-service:8001"
     routes:
@@ -46,31 +48,14 @@ services:
       - name: jwt
         config:
           claims_to_verify: ["exp"]
-          uri_param_names: ["token"]
 
-  - name: payment-service
-    url: "http://payment-service:3000"
-    routes:
-      - name: payment-api-route
-        paths: ["/payment-api"]
-        strip_path: true
-    plugins:
-      - name: jwt
-        config:
-          claims_to_verify: ["exp"]
-
-  - name: payment-service-public
-    url: "http://payment-service:3000"
-    routes:
-      - name: payment-webhook-route
-        paths: ["/payment-webhook"]
-        strip_path: true
-
+# 2. Định nghĩa Consumer chứa Public Key (Đây là chỗ cấu hình Key đúng)
 consumers:
   - username: shared-auth-consumer
     jwt_secrets:
       - algorithm: RS256
-        key: "my-app-auth"
+        # Key này dùng để khớp với claim 'iss' hoặc chỉ cần 1 key duy nhất nếu config lỏng
+        key: "http://auth-service:8080" # HOẶC điền giá trị 'iss' trong token của bạn vào đây
         rsa_public_key: |
           -----BEGIN PUBLIC KEY-----
           MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1W4HxmDaLrRtv2RNYFaQ
@@ -82,13 +67,21 @@ consumers:
           wwIDAQAB
           -----END PUBLIC KEY-----
 
-# SỬA Ở ĐÂY: Dùng "plugins" thay vì "_plugins"
+# 3. Global Plugins
 plugins:
   - name: cors
     config:
-      origins: ["http://localhost:5173"]
+      # KHÔNG ĐƯỢC DÙNG "*" nếu credentials: true. Hãy điền domain frontend của bạn.
+      origins: ["http://localhost:5173", "http://myapp.com"] 
       methods: ["GET","POST","PUT","DELETE","OPTIONS"]
       headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "Authorization"]
       exposed_headers: ["X-Auth-Token"]
       credentials: true
       max_age: 3600
+
+  - name: rate-limiting
+    config:
+      minute: 1000
+      policy: local
+      # Tốt nhất nên limit theo IP để tránh 1 người spam hết quota của cả hệ thống
+      limit_by: ip

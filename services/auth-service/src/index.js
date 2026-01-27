@@ -1,13 +1,16 @@
 require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const authRoutes = require('./routes/auth');
 const authMiddleware = require('./middleware/auth');
 const { initDB } = require('./db');
+const { getRedisClient } = require('./config/redis');
 
 const PORT = process.env.PORT || 8080;
 
 const app = express();
 app.use(express.json());
+app.use(cookieParser()); // Phase 2: Parse cookies for refresh tokens
 
 // public auth routes
 app.use('/auth', authRoutes);
@@ -22,7 +25,13 @@ app.get('/health', (req, res) => res.json({ alive: true }));
 
 const startPaymentConsumer = require('./consumers/PaymentSuccessConsumer');
 
-initDB().then(() => {
+// Initialize Redis and DB
+Promise.all([
+  initDB(),
+  getRedisClient()
+]).then(() => {
+  console.log('✓ Database and Redis connected');
+  
   app.listen(PORT, () => {
     console.log(`Auth Service listening on ${PORT}`);
 
@@ -32,6 +41,6 @@ initDB().then(() => {
     });
   });
 }).catch(err => {
-  console.error('DB init failed', err);
+  console.error('Service initialization failed:', err);
   process.exit(1);
 });

@@ -32,7 +32,7 @@ PREDICTION_INTERVAL_SEC = int(os.getenv("PREDICTION_INTERVAL_SEC", "300"))
 # All trading pairs to predict
 ALL_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT"
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "DOTUSDT", "POLUSDT"
 ]
 
 # Thread-safe news buffer

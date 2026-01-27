@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
-import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity } from 'lucide-react';
+import { useToast } from './ToastProvider';
+import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity, Lock, ChevronDown } from 'lucide-react';
 
 export default function InvestmentSimulator() {
-    const { authFetch, user, symbol, token } = useStore();
+    const { authFetch, user, symbol, token, isVip } = useStore();
+    const { showToast } = useToast();
     const [investments, setInvestments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
@@ -25,6 +27,20 @@ export default function InvestmentSimulator() {
     useEffect(() => {
         if (symbol) setSelectedSymbol(symbol);
     }, [symbol]);
+
+    // Set default target date to 1 hour from now
+    useEffect(() => {
+        const now = new Date();
+        now.setHours(now.getHours() + 1);
+        // Format to datetime-local input format: YYYY-MM-DDTHH:MM
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const defaultDateTime = `${year}-${month}-${day}T${hours}:${minutes}`;
+        setTargetDate(defaultDateTime);
+    }, []);
 
     useEffect(() => {
         loadInvestments();
@@ -94,12 +110,12 @@ export default function InvestmentSimulator() {
     const handleAnalyze = async (e) => {
         e.preventDefault();
         if (!user?.id) {
-            alert('Vui lòng đăng nhập lại.');
+            showToast('Vui lòng đăng nhập lại', 'warning');
             return;
         }
 
         if (!targetDate) {
-            alert('Vui lòng chọn thời gian bán.');
+            showToast('Vui lòng chọn thời gian bán', 'warning');
             return;
         }
 
@@ -121,11 +137,11 @@ export default function InvestmentSimulator() {
             if (res.ok) {
                 setAnalysisResult(data.ai_recommendation);
             } else {
-                alert(data.error || 'Phân tích thất bại');
+                showToast(data.error || 'Phân tích thất bại', 'error');
             }
         } catch (error) {
             console.error('Analyze error', error);
-            alert('Lỗi kết nối đến server phân tích.');
+            showToast('Lỗi kết nối đến server phân tích', 'error');
         } finally {
             setAnalyzing(false);
         }
@@ -159,10 +175,10 @@ export default function InvestmentSimulator() {
                 setAnalysisResult(null); // Reset form
                 setTargetDate('');
             } else {
-                alert(data.error || 'Tạo đầu tư thất bại');
+                showToast(data.error || 'Tạo đầu tư thất bại', 'error');
             }
         } catch (error) {
-            alert('Lỗi khi tạo đầu tư.');
+            showToast('Lỗi khi tạo đầu tư', 'error');
         } finally {
             setLoading(false);
         }
@@ -190,262 +206,288 @@ export default function InvestmentSimulator() {
 
     return (
         <div className="investment-simulator">
-            <h2>
-                <BrainCircuit className="brand-icon" size={32} />
-                Mô Phỏng Đầu Tư AI
-            </h2>
+            {!isVip ? (
+                <div className="vip-lock-container">
+                    <Lock className="vip-lock-icon" size={64} />
+                    <h3>Tính Năng VIP</h3>
+                    <p>Mô phỏng đầu tư với AI chỉ dành cho tài khoản VIP.</p>
+                    <p className="vip-benefits">
+                        ✨ Phân tích AI chuyên sâu<br />
+                        📊 Dự đoán lợi nhuận chính xác<br />
+                        🎯 Theo dõi danh mục đầu tư<br />
+                        🤖 Lời khuyên từ mô hình Deep Learning
+                    </p>
+                    <button className="upgrade-btn" onClick={() => {
+                        // Trigger upgrade modal from parent
+                        window.dispatchEvent(new CustomEvent('showUpgradeModal'));
+                    }}>
+                        Nâng Cấp VIP Ngay
+                    </button>
+                </div>
+            ) : (
+                <>
+                    <h2>
+                        <BrainCircuit className="brand-icon" size={32} />
+                        Mô Phỏng Đầu Tư AI
+                    </h2>
 
-            <div className="simulator-grid">
-                {/* Left: Control Panel */}
-                <div className="sidebar-col">
-                    <div className="card">
-                        <h3>Tham Số Đầu Tư</h3>
-                        <form onSubmit={handleAnalyze}>
-                            <div className="input-group">
-                                <label>Cặp Coin</label>
-                                <div className="input-wrapper">
-                                    <input
-                                        type="text"
-                                        value={selectedSymbol}
-                                        onChange={(e) => setSelectedSymbol(e.target.value.toUpperCase())}
-                                        className="styled-input"
-                                        style={{ paddingLeft: '12px' }}
-                                    />
-                                </div>
+                    <div className="simulator-grid">
+                        {/* Left: Control Panel */}
+                        <div className="sidebar-col">
+                            <div className="card">
+                                <h3>Tham Số Đầu Tư</h3>
+                                <form onSubmit={handleAnalyze}>
+                                    <div className="input-group">
+                                        <label>Cặp Coin</label>
+                                        <div className="input-wrapper">
+                                            <select
+                                                value={selectedSymbol}
+                                                onChange={(e) => setSelectedSymbol(e.target.value)}
+                                                className="styled-input"
+                                                style={{ paddingLeft: '12px', paddingRight: '32px', appearance: 'none', cursor: 'pointer' }}
+                                            >
+                                                {['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOTUSDT', 'POLUSDT'].map(s => (
+                                                    <option key={s} value={s}>{s}</option>
+                                                ))}
+                                            </select>
+                                            <ChevronDown className="input-icon" size={18} style={{ left: 'auto', right: '12px', color: 'var(--text-secondary)' }} />
+                                        </div>
+                                    </div>
+
+                                    <div className="input-group">
+                                        <label>Số Vốn (USDT)</label>
+                                        <div className="input-wrapper">
+                                            <DollarSign className="input-icon" size={18} />
+                                            <input
+                                                type="number"
+                                                value={usdtAmount}
+                                                onChange={(e) => setUsdtAmount(e.target.value)}
+                                                className="styled-input"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="input-group">
+                                        <label>Thời điểm Bán (Mục tiêu)</label>
+                                        <div className="input-wrapper">
+                                            <Calendar className="input-icon" size={18} />
+                                            <input
+                                                type="datetime-local"
+                                                value={targetDate}
+                                                onChange={(e) => setTargetDate(e.target.value)}
+                                                className="styled-input"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        type="submit"
+                                        disabled={analyzing || loading}
+                                        className="btn-primary"
+                                    >
+                                        {analyzing ? (
+                                            <>
+                                                <Activity className="animate-spin" size={20} />
+                                                Đang Phân Tích...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <BrainCircuit size={20} />
+                                                Phân Tích Với AI
+                                            </>
+                                        )}
+                                    </button>
+                                </form>
                             </div>
 
-                            <div className="input-group">
-                                <label>Số Vốn (USDT)</label>
-                                <div className="input-wrapper">
-                                    <DollarSign className="input-icon" size={18} />
-                                    <input
-                                        type="number"
-                                        value={usdtAmount}
-                                        onChange={(e) => setUsdtAmount(e.target.value)}
-                                        className="styled-input"
-                                    />
+                            {/* AI Analysis Result Preview */}
+                            {analysisResult && (
+                                <div className="analysis-preview card">
+                                    <div className="analysis-header">
+                                        <AlertCircle size={20} />
+                                        Kết Quả Phân Tích AI
+                                    </div>
+
+                                    <div className="advice-text">
+                                        "{getFormattedAdvice(analysisResult.advice)}"
+                                    </div>
+
+                                    <div className="stats-grid">
+                                        <div className="stat-item">
+                                            <div className="stat-label">Xu hướng</div>
+                                            <div className={`stat-value ${analysisResult.direction === 'UP' ? 'text-up' : 'text-down'}`}>
+                                                {analysisResult.direction}
+                                            </div>
+                                        </div>
+                                        <div className="stat-item">
+                                            <div className="stat-label">Tin cậy</div>
+                                            <div className="stat-value" style={{ color: 'var(--accent-yellow)' }}>
+                                                {(analysisResult.confidence * 100).toFixed(0)}%
+                                            </div>
+                                        </div>
+                                        <div className="stat-item">
+                                            <div className="stat-label">Lợi Nhuận</div>
+                                            <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_usdt)}</div>
+                                        </div>
+                                        <div className="stat-item">
+                                            <div className="stat-label">% Dự Kiến</div>
+                                            <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_percent, true)}</div>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={() => setShowConfirmModal(true)}
+                                        className="btn-primary btn-success"
+                                    >
+                                        <CheckCircle size={20} />
+                                        Xác Nhận Đầu Tư
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: History & Active Investments */}
+                        <div className="history-col">
+                            <div className="investment-table-container">
+                                <div className="table-header">
+                                    Danh Sách Đầu Tư Của Bạn
+                                </div>
+                                <div className="simulator-table-wrapper">
+                                    <table className="simulator-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Coin</th>
+                                                <th>Thời Gian Mua</th>
+                                                <th>Giá Mua</th>
+                                                <th>Dự Đoán AI</th>
+                                                <th>Trạng Thái</th>
+                                                <th style={{ textAlign: 'right' }}>Kết Quả</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {investments.map(inv => (
+                                                <tr key={inv.id}>
+                                                    <td className="text-bold" style={{ color: 'var(--accent-blue)' }}>{inv.symbol}</td>
+                                                    <td>
+                                                        {new Date(inv.buy_time).toLocaleTimeString()}
+                                                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
+                                                    </td>
+                                                    <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
+                                                    <td>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
+                                                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <span className={`status-badge ${inv.status === 'active' ? 'status-active' : 'status-closed'}`}>
+                                                            {inv.status === 'active' ? 'Đang chạy' : 'Đã đóng'}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }} className="text-mono">
+                                                        {inv.status === 'closed' ? (
+                                                            renderProfitLabel(inv.actual_profit_usdt)
+                                                        ) : (
+                                                            <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {investments.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                                        Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
-
-                            <div className="input-group">
-                                <label>Thời điểm Bán (Mục tiêu)</label>
-                                <div className="input-wrapper">
-                                    <Calendar className="input-icon" size={18} />
-                                    <input
-                                        type="datetime-local"
-                                        value={targetDate}
-                                        onChange={(e) => setTargetDate(e.target.value)}
-                                        className="styled-input"
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={analyzing || loading}
-                                className="btn-primary"
-                            >
-                                {analyzing ? (
-                                    <>
-                                        <Activity className="animate-spin" size={20} />
-                                        Đang Phân Tích...
-                                    </>
-                                ) : (
-                                    <>
-                                        <BrainCircuit size={20} />
-                                        Phân Tích Với AI
-                                    </>
-                                )}
-                            </button>
-                        </form>
+                        </div>
                     </div>
 
-                    {/* AI Analysis Result Preview */}
-                    {analysisResult && (
-                        <div className="analysis-preview card">
-                            <div className="analysis-header">
-                                <AlertCircle size={20} />
-                                Kết Quả Phân Tích AI
-                            </div>
-
-                            <div className="advice-text">
-                                "{getFormattedAdvice(analysisResult.advice)}"
-                            </div>
-
-                            <div className="stats-grid">
-                                <div className="stat-item">
-                                    <div className="stat-label">Xu hướng</div>
-                                    <div className={`stat-value ${analysisResult.direction === 'UP' ? 'text-up' : 'text-down'}`}>
-                                        {analysisResult.direction}
-                                    </div>
+                    {/* Confirm Modal */}
+                    {showConfirmModal && (
+                        <div className="modal-overlay">
+                            <div className="modal-content">
+                                <h3 className="modal-title">Xác Nhận Đầu Tư?</h3>
+                                <div className="modal-body">
+                                    Bạn sắp mở lệnh mua <b>{selectedSymbol}</b> với giá trị <b>${usdtAmount}</b>.<br />
+                                    Lệnh sẽ tự động bán vào lúc: <br />
+                                    <span className="text-bold" style={{ color: 'var(--accent-blue)' }}>{new Date(targetDate).toLocaleString()}</span>
                                 </div>
-                                <div className="stat-item">
-                                    <div className="stat-label">Tin cậy</div>
-                                    <div className="stat-value" style={{ color: 'var(--accent-yellow)' }}>
-                                        {(analysisResult.confidence * 100).toFixed(0)}%
-                                    </div>
-                                </div>
-                                <div className="stat-item">
-                                    <div className="stat-label">Lợi Nhuận</div>
-                                    <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_usdt)}</div>
-                                </div>
-                                <div className="stat-item">
-                                    <div className="stat-label">% Dự Kiến</div>
-                                    <div className="stat-value">{renderProfitLabel(analysisResult.predicted_profit_percent, true)}</div>
+                                <div className="modal-footer">
+                                    <button
+                                        onClick={() => setShowConfirmModal(false)}
+                                        className="btn-secondary"
+                                    >
+                                        Hủy Bỏ
+                                    </button>
+                                    <button
+                                        onClick={handleConfirmInvestment}
+                                        className="btn-primary"
+                                        style={{ flex: 1 }}
+                                    >
+                                        Xác Nhận Mua
+                                    </button>
                                 </div>
                             </div>
-
-                            <button
-                                onClick={() => setShowConfirmModal(true)}
-                                className="btn-primary btn-success"
-                            >
-                                <CheckCircle size={20} />
-                                Xác Nhận Đầu Tư
-                            </button>
                         </div>
                     )}
-                </div>
 
-                {/* Right: History & Active Investments */}
-                <div className="history-col">
-                    <div className="investment-table-container">
-                        <div className="table-header">
-                            Danh Sách Đầu Tư Của Bạn
-                        </div>
-                        <div className="simulator-table-wrapper">
-                            <table className="simulator-table">
-                                <thead>
-                                    <tr>
-                                        <th>Coin</th>
-                                        <th>Thời Gian Mua</th>
-                                        <th>Giá Mua</th>
-                                        <th>Dự Đoán AI</th>
-                                        <th>Trạng Thái</th>
-                                        <th style={{ textAlign: 'right' }}>Kết Quả</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {investments.map(inv => (
-                                        <tr key={inv.id}>
-                                            <td className="text-bold" style={{ color: 'var(--accent-blue)' }}>{inv.symbol}</td>
-                                            <td>
-                                                {new Date(inv.buy_time).toLocaleTimeString()}
-                                                <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
-                                            </td>
-                                            <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
-                                            <td>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                    {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
-                                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <span className={`status-badge ${inv.status === 'active' ? 'status-active' : 'status-closed'}`}>
-                                                    {inv.status === 'active' ? 'Đang chạy' : 'Đã đóng'}
-                                                </span>
-                                            </td>
-                                            <td style={{ textAlign: 'right' }} className="text-mono">
-                                                {inv.status === 'closed' ? (
-                                                    renderProfitLabel(inv.actual_profit_usdt)
-                                                ) : (
-                                                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {investments.length === 0 && (
-                                        <tr>
-                                            <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                                                Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
-                                            </td>
-                                        </tr>
+                    {/* Notification Modal */}
+                    {notification && (
+                        <div className="modal-overlay">
+                            <div className="modal-content">
+                                <button
+                                    onClick={() => setNotification(null)}
+                                    className="modal-close"
+                                >
+                                    <X size={24} />
+                                </button>
+
+                                <div style={{ textAlign: 'center' }}>
+                                    {notification.type === 'success' ? (
+                                        <CheckCircle className="modal-icon-large text-up" />
+                                    ) : (
+                                        <DollarSign className="modal-icon-large text-down" style={{ color: 'var(--accent-yellow)' }} />
                                     )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            {/* Confirm Modal */}
-            {showConfirmModal && (
-                <div className="modal-overlay">
-                    <div className="modal-content">
-                        <h3 className="modal-title">Xác Nhận Đầu Tư?</h3>
-                        <div className="modal-body">
-                            Bạn sắp mở lệnh mua <b>{selectedSymbol}</b> với giá trị <b>${usdtAmount}</b>.<br />
-                            Lệnh sẽ tự động bán vào lúc: <br />
-                            <span className="text-bold" style={{ color: 'var(--accent-blue)' }}>{new Date(targetDate).toLocaleString()}</span>
-                        </div>
-                        <div className="modal-footer">
-                            <button
-                                onClick={() => setShowConfirmModal(false)}
-                                className="btn-secondary"
-                            >
-                                Hủy Bỏ
-                            </button>
-                            <button
-                                onClick={handleConfirmInvestment}
-                                className="btn-primary"
-                                style={{ flex: 1 }}
-                            >
-                                Xác Nhận Mua
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+                                    <h3 className="modal-title">{notification.message}</h3>
 
-            {/* Notification Modal */}
-            {notification && (
-                <div className="modal-overlay">
-                    <div className="modal-content">
-                        <button
-                            onClick={() => setNotification(null)}
-                            className="modal-close"
-                        >
-                            <X size={24} />
-                        </button>
+                                    {notification.type === 'closed' && (
+                                        <div className="modal-result-box">
+                                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Kết quả thực tế</div>
+                                            <div style={{ fontSize: '32px', marginBottom: '12px' }}>
+                                                {renderProfitLabel(notification.data.actual_profit_usdt)}
+                                            </div>
+                                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                Dự báo ban đầu: {renderProfitLabel(notification.data.predicted_profit_usdt)}
+                                                <br />
+                                                Độ chính xác AI: <span style={{ color: 'var(--accent-blue)', fontWeight: 'bold' }}>{parseFloat(notification.data.ai_accuracy).toFixed(1)}%</span>
+                                            </div>
+                                        </div>
+                                    )}
 
-                        <div style={{ textAlign: 'center' }}>
-                            {notification.type === 'success' ? (
-                                <CheckCircle className="modal-icon-large text-up" />
-                            ) : (
-                                <DollarSign className="modal-icon-large text-down" style={{ color: 'var(--accent-yellow)' }} />
-                            )}
+                                    {notification.type === 'success' && (
+                                        <div style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
+                                            Hệ thống sẽ tự động chốt lệnh khi đến thời điểm mục tiêu.
+                                        </div>
+                                    )}
 
-                            <h3 className="modal-title">{notification.message}</h3>
-
-                            {notification.type === 'closed' && (
-                                <div className="modal-result-box">
-                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Kết quả thực tế</div>
-                                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>
-                                        {renderProfitLabel(notification.data.actual_profit_usdt)}
-                                    </div>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                        Dự báo ban đầu: {renderProfitLabel(notification.data.predicted_profit_usdt)}
-                                        <br />
-                                        Độ chính xác AI: <span style={{ color: 'var(--accent-blue)', fontWeight: 'bold' }}>{parseFloat(notification.data.ai_accuracy).toFixed(1)}%</span>
-                                    </div>
+                                    <button
+                                        onClick={() => setNotification(null)}
+                                        className="btn-primary"
+                                        style={{ marginTop: '24px' }}
+                                    >
+                                        Tuyệt vời
+                                    </button>
                                 </div>
-                            )}
-
-                            {notification.type === 'success' && (
-                                <div style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
-                                    Hệ thống sẽ tự động chốt lệnh khi đến thời điểm mục tiêu.
-                                </div>
-                            )}
-
-                            <button
-                                onClick={() => setNotification(null)}
-                                className="btn-primary"
-                                style={{ marginTop: '24px' }}
-                            >
-                                Tuyệt vời
-                            </button>
+                            </div>
                         </div>
-                    </div>
-                </div>
+                    )}
+                </>
             )}
         </div>
     );

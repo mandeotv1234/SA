@@ -89,8 +89,8 @@ services:
     image: kong/kong-gateway:3.6
     container_name: kong
     ports:
-      - "8000:8000"
-      - "8001:8001"
+      - "8000:8000" # ONLY Kong Gateway exposes ports externally
+      - "8001:8001" # Kong Admin API (for configuration)
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: "/kong/kong.yml"
@@ -106,6 +106,9 @@ services:
         condition: service_completed_successfully
       haproxy:
         condition: service_started
+    networks:
+      - internal
+      - default
 
   kong-init:
     image: python:3.11-slim
@@ -122,15 +125,26 @@ services:
   auth-service:
     build:
       context: ./services/auth-service
+    env_file:
+      - ./services/auth-service/.env # Business logic configs (JWT, etc.)
     environment:
+      # Infrastructure configs (DB, Kafka, Redis)
       DATABASE_URL: postgresql://dev:dev@postgres:5432/appdb
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: dev
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:9092
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "8081:8080"
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "8081:8080"
     volumes:
       - ./services/auth-service:/app
       - /app/node_modules
@@ -144,6 +158,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   core-service:
     build:
@@ -151,15 +168,19 @@ services:
     environment:
       DATABASE_URL: postgresql://dev:dev@timescaledb:5432/timeseriesdb
       KAFKA_BROKERS: kafka:9092
-      MARKET_DATA_TOPIC: market_data
+      MARKET_DATA_TOPIC: market.prices
       AI_INSIGHTS_TOPIC: ai_insights
       MARKET_CONSUMER_GROUP_ID: core-service-market-consumer
       NEWS_CONSUMER_GROUP_ID: core-service-news-consumer
+      REDIS_URL: redis://redis:6379 # For token blacklist defense-in-depth
     depends_on:
       timescaledb:
         condition: service_started
-    ports:
-      - "3001:3000"
+      redis:
+        condition: service_started
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "3001:3000"
     volumes:
       - ./services/core-service:/app
       - /app/node_modules
@@ -173,6 +194,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   stream-service:
     build:
@@ -180,8 +204,11 @@ services:
     environment:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
       SEND_PARTIAL: "true"
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "3002-3005:3000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -203,6 +230,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   crawler-service:
     build:
@@ -224,8 +254,9 @@ services:
         condition: service_started
       mongo-crawler:
         condition: service_started
-    ports:
-      - "8003:8001"
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "8003:8001"
     volumes:
       - ./services/crawler-service:/app
     healthcheck:
@@ -238,6 +269,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   mongo-crawler:
     image: mongo:6.0
@@ -273,7 +307,7 @@ services:
       OLLAMA_MODEL: "llama3.2"
 
       # Settings
-      PREDICTION_INTERVAL_SEC: "600"
+      PREDICTION_INTERVAL_SEC: "60"
       MAX_NEWS_BUFFER: "5000"
       DEBUG_MARKET_CACHE: "true"
     volumes:
@@ -284,20 +318,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    ports:
-      - "8002:8002"
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "8002:8002"
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   stream-ingester:
     build:
       context: ./services/stream-ingester
     environment:
       KAFKA_BROKERS: kafka:9092
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
     depends_on:
       kafka:
         condition: service_healthy
@@ -315,8 +353,9 @@ services:
       PORT: 3000
       SEPAY_API_KEY: "${SEPAY_API_KEY}"
       DATABASE_URL: postgresql://payment_user:payment_password@payment-db:5432/payment_db
-    ports:
-      - "8004:3000"
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "8004:3000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -335,6 +374,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   payment-db:
     image: postgres:15
@@ -370,8 +412,9 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
-    ports:
-      - "8006:8001"
+    # SECURITY: No port exposure - only accessible via Kong Gateway
+    # ports:
+    #   - "8006:8001"
     volumes:
       - ./services/investment-service:/app
       - /app/node_modules
@@ -385,6 +428,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+      - default
 
   investment-db:
     image: postgres:15-alpine
@@ -416,3 +462,12 @@ volumes:
     driver: local
   investment_pgdata:
     driver: local
+
+networks:
+  default:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: false # SECURITY: Set to true in production to create isolated internal network
+    # When internal: true, services on this network cannot reach external internet
+    # Only Kong Gateway should be on both networks to act as the sole entry point
