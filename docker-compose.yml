@@ -219,9 +219,9 @@ services:
       - /app/node_modules
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: 3s # Faster detection for consistent hashing
+      timeout: 2s # Reduced timeout
+      retries: 3 # Fail fast to trigger rehashing
       start_period: 30s
     deploy:
       replicas: 3
