@@ -1,16 +1,31 @@
 /* Global Reset & variables */
 :root {
-  --bg-dark: #131722;
-  --bg-panel: #1e222d;
-  --bg-hover: #2a2e39;
-  --text-primary: #d1d4dc;
-  --text-secondary: #787b86;
-  --accent-green: #089981;
-  --accent-red: #f23645;
-  --accent-blue: #2962ff;
-  --accent-yellow: #fcc63b;
-  --border-color: #2a2e39;
-  --font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+  --bg-dark: #0d0e12;
+  --bg-panel: #161a1e;
+  --bg-hover: #1f2329;
+  --bg-elevated: #232931;
+  --text-primary: #d9d9d9;
+  --text-secondary: #848e9c;
+  --text-tertiary: #5d6872;
+  --accent-green: #0ecb81;
+  --accent-red: #f6465d;
+  --accent-blue: #3861fb;
+  --accent-yellow: #f0b90b;
+  --border-color: #252930;
+  --border-hover: #3a3f47;
+  
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-glow-blue: 0 0 20px rgba(56, 97, 251, 0.3);
+  --shadow-glow-green: 0 0 20px rgba(14, 203, 129, 0.3);
+  
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 body {
@@ -28,12 +43,12 @@ body {
   box-sizing: border-box;
 }
 
-/* App Layout */
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100%;
+  position: relative;
 }
 
 .main-content {
@@ -54,26 +69,41 @@ body {
 }
 
 .toolbar-btn {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
-  color: var(--text-primary);
-  border-radius: 4px;
+  color: var(--text-secondary);
+  border-radius: 6px;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: all var(--transition-base);
+  position: relative;
 }
 
 .toolbar-btn:hover {
   background-color: var(--bg-hover);
   color: var(--accent-blue);
+  transform: scale(1.05);
 }
 
 .toolbar-btn.active {
   color: var(--accent-blue);
+  background-color: var(--bg-hover);
+}
+
+.toolbar-btn.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background-color: var(--accent-blue);
+  border-radius: 0 3px 3px 0;
 }
 
 
@@ -83,15 +113,18 @@ body {
   border-right: 1px solid var(--border-color);
 }
 
-/* Navbar */
 .navbar {
-  height: 56px;
-  background-color: var(--bg-dark);
+  height: 60px;
+  background-color: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 20px;
+  position: relative;
+  z-index: 100;
+  backdrop-filter: blur(10px);
 }
 
 .nav-left,
@@ -104,14 +137,31 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-weight: 700;
-  font-size: 18px;
+  font-size: 20px;
   color: var(--text-primary);
+  letter-spacing: -0.5px;
+  transition: transform var(--transition-fast);
+}
+
+.brand:hover {
+  transform: scale(1.02);
 }
 
 .brand-icon {
   color: var(--accent-blue);
+  filter: drop-shadow(0 0 8px rgba(56, 97, 251, 0.5));
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(56, 97, 251, 0.5));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(56, 97, 251, 0.8));
+  }
 }
 
 .price-display {
@@ -161,7 +211,6 @@ body {
   color: var(--text-primary);
 }
 
-/* Symbol Selector */
 .symbol-selector {
   position: relative;
 }
@@ -174,12 +223,16 @@ body {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all var(--transition-base);
 }
 
 .symbol-btn:hover {
   background-color: var(--bg-hover);
+  transform: translateY(-1px);
 }
 
 .dropdown-menu {
@@ -188,11 +241,23 @@ body {
   left: 0;
   margin-top: 8px;
   width: 200px;
-  background-color: var(--bg-panel);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
   z-index: 100;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .dropdown-search {
@@ -232,7 +297,6 @@ body {
   background-color: var(--bg-hover);
 }
 
-/* Navbar Timeframe Tools */
 .nav-separator {
   width: 1px;
   height: 24px;
@@ -258,7 +322,6 @@ body {
 }
 
 
-/* Sidebar */
 .sidebar-container {
   width: 350px;
   background-color: var(--bg-panel);
@@ -270,31 +333,52 @@ body {
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-panel);
 }
 
 .tab-btn {
   flex: 1;
   background: none;
   border: none;
-  padding: 12px;
+  padding: 14px;
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 13px;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  transition: all var(--transition-base);
+  position: relative;
 }
 
 .tab-btn:hover {
   color: var(--text-primary);
+  background-color: rgba(56, 97, 251, 0.05);
 }
 
 .tab-btn.active {
   color: var(--accent-blue);
   border-bottom-color: var(--accent-blue);
   background-color: var(--bg-hover);
+}
+
+.tab-btn.active::before {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-blue), transparent);
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 .tab-btn.active.vip {
@@ -308,7 +392,6 @@ body {
   background-color: var(--bg-dark);
 }
 
-/* News Items */
 .news-list {
   padding: 8px;
   display: flex;
@@ -370,7 +453,6 @@ body {
   margin-top: 6px;
 }
 
-/* Insights */
 .insight-item {
   background-color: var(--bg-panel);
   border: 1px solid var(--border-color);
@@ -505,14 +587,22 @@ body {
 }
 
 .upgrade-btn {
-  background-color: var(--accent-yellow);
+  background: linear-gradient(135deg, var(--accent-yellow) 0%, #d99d0a 100%);
   color: #000;
-  padding: 8px 16px;
+  padding: 10px 20px;
   border: none;
-  border-radius: 4px;
-  font-weight: bold;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 14px;
   margin-top: 16px;
   cursor: pointer;
+  transition: all var(--transition-base);
+  box-shadow: 0 4px 12px rgba(240, 185, 11, 0.4);
+}
+
+.upgrade-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(240, 185, 11, 0.6);
 }
 
 /* Trading Dashboard */
@@ -528,10 +618,11 @@ body {
 .symbol-selector-bar {
   background-color: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
-  padding: 12px 16px;
+  padding: 14px 20px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .symbol-selector-bar h3 {
@@ -548,26 +639,47 @@ body {
 }
 
 .symbol-buttons .symbol-btn {
-  background-color: var(--bg-hover);
+  background-color: var(--bg-dark);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  padding: 6px 12px;
-  border-radius: 4px;
+  padding: 8px 16px;
+  border-radius: 6px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.symbol-buttons .symbol-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(56, 97, 251, 0.2), transparent);
+  transition: left var(--transition-slow);
+}
+
+.symbol-buttons .symbol-btn:hover::before {
+  left: 100%;
 }
 
 .symbol-buttons .symbol-btn:hover {
-  background-color: var(--bg-dark);
+  background-color: var(--bg-hover);
   border-color: var(--accent-blue);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(56, 97, 251, 0.3);
 }
 
 .symbol-buttons .symbol-btn.active {
-  background-color: var(--accent-blue);
+  background: linear-gradient(135deg, var(--accent-blue) 0%, #2952cc 100%);
   color: white;
   border-color: var(--accent-blue);
+  box-shadow: var(--shadow-glow-blue);
+  transform: translateY(-1px);
 }
 
 .charts-grid {
@@ -585,11 +697,16 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: box-shadow var(--transition-base);
+}
+
+.chart-container:hover {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
 }
 
 .chart-header {
   background-color: var(--bg-panel);
-  padding: 8px 12px;
+  padding: 10px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -601,25 +718,30 @@ body {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  letter-spacing: 0.3px;
 }
 
 .chart-header select {
-  background-color: var(--bg-hover);
+  background-color: var(--bg-dark);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   outline: none;
+  transition: all var(--transition-base);
 }
 
 .chart-header select:hover {
   border-color: var(--accent-blue);
+  background-color: var(--bg-hover);
 }
 
 .chart-header select:focus {
   border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(56, 97, 251, 0.15);
 }
 
 /* Investment Simulator Styles */
@@ -710,7 +832,7 @@ body {
   width: 100%;
   padding: 12px;
   border-radius: 8px;
-  background-color: var(--accent-blue);
+  background: linear-gradient(135deg, var(--accent-blue) 0%, #2952cc 100%);
   color: white;
   border: none;
   font-weight: 700;
@@ -720,23 +842,43 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: transform 0.1s, background-color 0.2s;
+  transition: all var(--transition-base);
+  box-shadow: 0 4px 12px rgba(56, 97, 251, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.btn-primary:hover::before {
+  left: 100%;
 }
 
 .btn-primary:hover {
-  background-color: #1e54e4;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(56, 97, 251, 0.5);
 }
 
 .btn-primary:active {
   transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(56, 97, 251, 0.4);
 }
 
 .btn-primary:disabled {
-  background-color: var(--bg-hover);
+  background: var(--bg-hover);
   color: var(--text-secondary);
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
 .btn-success {
@@ -1004,12 +1146,23 @@ body {
 
 .vip-badge-mini {
   font-size: 9px;
-  background-color: var(--accent-yellow);
+  background: linear-gradient(135deg, var(--accent-yellow) 0%, #d99d0a 100%);
   color: #000;
   padding: 2px 6px;
   border-radius: 10px;
   font-weight: 700;
   text-transform: uppercase;
+  box-shadow: 0 0 10px rgba(240, 185, 11, 0.5);
+  animation: vip-pulse 2s ease-in-out infinite;
+}
+
+@keyframes vip-pulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(240, 185, 11, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(240, 185, 11, 0.8);
+  }
 }
 
 /* Full Page Content (for Investment page) */
@@ -1063,7 +1216,6 @@ body {
   color: var(--text-primary);
 }
 
-/* Toast Notifications */
 .toast-container {
   position: fixed;
   top: 80px;
