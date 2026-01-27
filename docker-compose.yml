@@ -89,8 +89,8 @@ services:
     image: kong/kong-gateway:3.6
     container_name: kong
     ports:
-      - "8000:8000"  # ONLY Kong Gateway exposes ports externally
-      - "8001:8001"  # Kong Admin API (for configuration)
+      - "8000:8000" # ONLY Kong Gateway exposes ports externally
+      - "8001:8001" # Kong Admin API (for configuration)
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: "/kong/kong.yml"
@@ -126,7 +126,7 @@ services:
     build:
       context: ./services/auth-service
     env_file:
-      - ./services/auth-service/.env  # Business logic configs (JWT, etc.)
+      - ./services/auth-service/.env # Business logic configs (JWT, etc.)
     environment:
       # Infrastructure configs (DB, Kafka, Redis)
       DATABASE_URL: postgresql://dev:dev@postgres:5432/appdb
@@ -168,11 +168,11 @@ services:
     environment:
       DATABASE_URL: postgresql://dev:dev@timescaledb:5432/timeseriesdb
       KAFKA_BROKERS: kafka:9092
-      MARKET_DATA_TOPIC: market_data
+      MARKET_DATA_TOPIC: market.prices
       AI_INSIGHTS_TOPIC: ai_insights
       MARKET_CONSUMER_GROUP_ID: core-service-market-consumer
       NEWS_CONSUMER_GROUP_ID: core-service-news-consumer
-      REDIS_URL: redis://redis:6379  # For token blacklist defense-in-depth
+      REDIS_URL: redis://redis:6379 # For token blacklist defense-in-depth
     depends_on:
       timescaledb:
         condition: service_started
@@ -204,7 +204,7 @@ services:
     environment:
       KAFKA_BROKERS: kafka:9092
       REDIS_URL: redis://redis:6379
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
       SEND_PARTIAL: "true"
     # SECURITY: No port exposure - only accessible via Kong Gateway
     # ports:
@@ -307,7 +307,7 @@ services:
       OLLAMA_MODEL: "llama3.2"
 
       # Settings
-      PREDICTION_INTERVAL_SEC: "600"
+      PREDICTION_INTERVAL_SEC: "60"
       MAX_NEWS_BUFFER: "5000"
       DEBUG_MARKET_CACHE: "true"
     volumes:
@@ -335,7 +335,7 @@ services:
       context: ./services/stream-ingester
     environment:
       KAFKA_BROKERS: kafka:9092
-      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,maticusdt"
+      SYMBOLS: "btcusdt,ethusdt,bnbusdt,solusdt,dogeusdt,adausdt,xrpusdt,avaxusdt,dotusdt,polusdt"
     depends_on:
       kafka:
         condition: service_healthy
@@ -468,6 +468,6 @@ networks:
     driver: bridge
   internal:
     driver: bridge
-    internal: false  # SECURITY: Set to true in production to create isolated internal network
+    internal: false # SECURITY: Set to true in production to create isolated internal network
     # When internal: true, services on this network cannot reach external internet
     # Only Kong Gateway should be on both networks to act as the sole entry point

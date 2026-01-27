@@ -28,7 +28,7 @@ const kafka = new Kafka({
 });
 
 const producer = kafka.producer();
-const consumer = kafka.consumer({ groupId: 'investment-service-group-v2' });
+const consumer = kafka.consumer({ groupId: 'investment-service-group-v3' });
 
 // Pending requests map
 const pendingAnalysisRequests = new Map(); // requestId -> { resolve, reject, timeout }
@@ -97,8 +97,13 @@ async function consumeKafkaTopics() {
 
                 if (topic === 'ai_insights') {
                     if (payload.type === 'aggregated_prediction') {
-                        latestAIPrediction = payload;
-                        console.log('[KAFKA] Received AI prediction update');
+                        // Only update if we have valid predictions
+                        if (payload.predictions && Array.isArray(payload.predictions) && payload.predictions.length > 0) {
+                            latestAIPrediction = payload;
+                            console.log(`[KAFKA] Received AI prediction update (${payload.predictions.length} symbols)`);
+                        } else {
+                            console.warn('[KAFKA] Received empty AI prediction, ignoring update');
+                        }
                     }
                 } else if (topic === 'investment.analysis.result') {
                     // Handle analysis result
@@ -126,9 +131,11 @@ async function fetchLatestPredictionFromCore() {
         const res = await axios.get(url);
         if (res.data && res.data.rows && res.data.rows.length > 0) {
             const row = res.data.rows[0];
-            if (row.payload && row.payload.predictions) {
+            if (row.payload && row.payload.predictions && row.payload.predictions.length > 0) {
                 latestAIPrediction = row.payload;
-                console.log('[WARMUP] Loaded latest prediction from Core Service');
+                console.log(`[WARMUP] Loaded latest prediction from Core Service (${row.payload.predictions.length} symbols)`);
+            } else {
+                console.warn('[WARMUP] Latest prediction from Core Service is empty or invalid, skipping update');
             }
         }
     } catch (e) {
@@ -138,14 +145,27 @@ async function fetchLatestPredictionFromCore() {
 
 // Get AI prediction for specific symbol
 async function getAIPredictionForSymbol(symbol) {
-    if (!latestAIPrediction || !latestAIPrediction.predictions) {
+    // Check if we need to fetch/refetch data
+    if (!latestAIPrediction || !latestAIPrediction.predictions || latestAIPrediction.predictions.length === 0) {
+        console.log('[AI] Current prediction data is missing or empty. Fetching from Core Service...');
         await fetchLatestPredictionFromCore();
-        if (!latestAIPrediction || !latestAIPrediction.predictions) {
+
+        if (!latestAIPrediction || !latestAIPrediction.predictions || latestAIPrediction.predictions.length === 0) {
+            console.warn('[AI] No valid prediction data available even after fetch');
             return null;
         }
     }
 
+    // Check if predictions array is empty (double check)
+    if (!Array.isArray(latestAIPrediction.predictions) || latestAIPrediction.predictions.length === 0) {
+        console.warn('[AI] Predictions array is empty - AI service is still processing');
+        return null;
+    }
+
     const pred = latestAIPrediction.predictions.find(p => p.symbol === symbol);
+    if (!pred) {
+        console.warn(`[AI] No prediction found for ${symbol} in ${latestAIPrediction.predictions.length} available predictions`);
+    }
     return pred || null;
 }
 
@@ -154,14 +174,12 @@ async function analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time) {
     const buyPrice = await getCurrentPrice(symbol);
     const coinAmount = usdt_amount / buyPrice;
 
-    // Get AI prediction context
+    // Get AI prediction - REQUIRED
     const aiPred = await getAIPredictionForSymbol(symbol);
-    if (!aiPred) {
-        throw new Error('AI_PREDICTION_UNAVAILABLE');
-    }
 
-    // Call AI Service via Kafka (Async Request-Reply)
-    let aiAnalysis = null;
+    if (!aiPred) {
+        throw new Error('AI_SERVICE_UNAVAILABLE');
+    }
     try {
         const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const analysisPayload = {
@@ -188,7 +206,7 @@ async function analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time) {
                     resolve(null);
                     console.warn(`[KAFKA TIMEOUT] Analysis request ${requestId} timed out`);
                 }
-            }, 1200000);
+            }, 120000); // 120 seconds timeout
 
             pendingAnalysisRequests.set(requestId, { resolve, reject, timeout });
         });
@@ -197,25 +215,29 @@ async function analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time) {
     }
 
     // Process Result
-    let predictedPrice, predictedProfitUsdt, aiAdvice, predictedPercent, displayDirection, displayConfidence;
+    let predictedPrice, predictedProfitUsdt, aiAdvice, predictedPercent;
+
     if (aiAnalysis && !aiAnalysis.error) {
+        // Got response from AI service
         predictedPrice = aiAnalysis.predicted_price;
         predictedProfitUsdt = aiAnalysis.predicted_profit_usdt;
         aiAdvice = aiAnalysis.advice;
         predictedPercent = aiAnalysis.predicted_profit_percent;
-        displayDirection = aiAnalysis.details?.direction || aiPred.direction;
-        displayConfidence = aiAnalysis.details?.confidence || aiPred.confidence;
+
+        const displayDirection = aiAnalysis.details?.direction || aiPred.direction;
+        const displayConfidence = aiAnalysis.details?.confidence || aiPred.confidence;
 
         // Enrich aiPred
         aiPred.direction = displayDirection;
         aiPred.confidence = displayConfidence;
         aiPred.change_percent = predictedPercent;
     } else {
-        // Fallback
+        // Fallback calculation
         predictedPrice = buyPrice + (buyPrice * ((aiPred.change_percent || 0) / 100));
         predictedProfitUsdt = (predictedPrice - buyPrice) * coinAmount;
-        aiAdvice = generateAdvice(aiPred, buyPrice, usdt_amount);
         predictedPercent = aiPred.change_percent || 0;
+
+        aiAdvice = generateAdvice(aiPred, buyPrice, usdt_amount);
     }
 
     return {
@@ -252,8 +274,12 @@ app.post('/v1/investments/analyze', async (req, res) => {
             }
         });
     } catch (err) {
-        if (err.message === 'AI_PREDICTION_UNAVAILABLE') {
-            return res.status(503).json({ error: 'AI prediction not available yet.' });
+        if (err.message === 'AI_SERVICE_UNAVAILABLE') {
+            return res.status(503).json({
+                error: 'Hệ thống AI đang khởi động. Vui lòng thử lại sau 1-2 phút.',
+                error_code: 'AI_SERVICE_UNAVAILABLE',
+                details: 'AI service is processing market data. Please wait a moment and try again.'
+            });
         }
         res.status(500).json({ error: err.message });
     }

@@ -51,6 +51,8 @@ const initConsumer = async (io) => {
         await redisSubscriber.subscribe(REDIS_CHANNEL, (message) => {
             try {
                 const data = JSON.parse(message);
+
+
                 const symbolRoom = data.symbol.toUpperCase();
                 const interval = (data.interval || '1m').toUpperCase();
                 const intervalRoom = `${symbolRoom}_${interval}`;

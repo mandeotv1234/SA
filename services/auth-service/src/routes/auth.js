@@ -46,13 +46,13 @@ router.post('/login', async (req, res) => {
   try {
     const r = await pool.query('SELECT id, email, password, is_vip FROM users WHERE lower(email) = lower($1) LIMIT 1', [normEmail]);
     const row = r.rows[0];
-    
+
     if (!row) {
       // Log failed authentication attempt
       AuditLogger.logAuthAttempt(null, normEmail, ipAddress, userAgent, false, 'user_not_found');
       return res.status(401).json({ error: 'invalid_credentials' });
     }
-    
+
     const ok = await bcrypt.compare(password, row.password);
     if (!ok) {
       // Log failed authentication attempt
@@ -66,17 +66,17 @@ router.post('/login', async (req, res) => {
       email: row.email,
       is_vip: !!row.is_vip
     });
-    
+
     // Phase 2: Create refresh token
     const refreshTokenData = await RefreshToken.createRefreshToken(
       row.id,
       ipAddress,
       userAgent
     );
-    
+
     // Log successful authentication
     AuditLogger.logAuthAttempt(row.id, row.email, ipAddress, userAgent, true);
-    
+
     // Set refresh token in httpOnly cookie
     const refreshTokenDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '7', 10);
     res.cookie('refresh_token', refreshTokenData.token, {
@@ -86,9 +86,9 @@ router.post('/login', async (req, res) => {
       maxAge: refreshTokenDays * 24 * 60 * 60 * 1000, // Days to milliseconds
       path: '/' // Available for all paths
     });
-    
-    res.json({ 
-      token, 
+
+    res.json({
+      token,
       is_vip: !!row.is_vip,
       refresh_token_expires_at: refreshTokenData.expiresAt
     });
@@ -103,7 +103,7 @@ router.post('/refresh', async (req, res) => {
   try {
     // Get refresh token from cookie
     const refreshToken = req.cookies?.refresh_token;
-    
+
     if (!refreshToken) {
       return res.status(401).json({
         error: {
@@ -113,10 +113,10 @@ router.post('/refresh', async (req, res) => {
         }
       });
     }
-    
+
     // Validate refresh token
     const tokenRecord = await RefreshToken.validateRefreshToken(refreshToken);
-    
+
     if (!tokenRecord) {
       return res.status(401).json({
         error: {
@@ -126,22 +126,22 @@ router.post('/refresh', async (req, res) => {
         }
       });
     }
-    
+
     // Phase 2: Replay attack detection
     // Check if this token was already used and rotated
     const isReused = await RefreshToken.isTokenReused(refreshToken);
-    
+
     if (isReused) {
       // SECURITY: Token reuse detected - revoke all user tokens
       await RefreshToken.revokeAllUserTokens(tokenRecord.user_id, 'replay_attack_detected');
-      
+
       // Log critical security event
       AuditLogger.logSecurityEvent('REPLAY_ATTACK_DETECTED', 'CRITICAL', {
         user_id: tokenRecord.user_id,
         ip_address: req.ip || req.connection.remoteAddress,
         user_agent: req.headers['user-agent']
       });
-      
+
       return res.status(401).json({
         error: {
           code: 'REPLAY_ATTACK_DETECTED',
@@ -151,13 +151,13 @@ router.post('/refresh', async (req, res) => {
         }
       });
     }
-    
+
     // Get user data
     const userResult = await pool.query(
       'SELECT id, email, is_vip FROM users WHERE id = $1 LIMIT 1',
       [tokenRecord.user_id]
     );
-    
+
     if (userResult.rows.length === 0) {
       return res.status(404).json({
         error: {
@@ -167,33 +167,33 @@ router.post('/refresh', async (req, res) => {
         }
       });
     }
-    
+
     const user = userResult.rows[0];
-    
+
     // Generate new access token
     const newAccessToken = signToken({
       sub: user.id,
       email: user.email,
       is_vip: !!user.is_vip
     });
-    
+
     // Phase 2: Token rotation - revoke old refresh token and create new one
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
+
     // Revoke old refresh token
     await RefreshToken.revokeRefreshTokenByHash(tokenRecord.token_hash, 'token_rotation');
-    
+
     // Create new refresh token
     const newRefreshTokenData = await RefreshToken.createRefreshToken(
       user.id,
       ipAddress,
       userAgent
     );
-    
+
     // Update last_used timestamp for tracking
     await RefreshToken.updateLastUsed(tokenRecord.token_hash);
-    
+
     // Set new refresh token in cookie
     const refreshTokenDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '7', 10);
     res.cookie('refresh_token', newRefreshTokenData.token, {
@@ -203,20 +203,20 @@ router.post('/refresh', async (req, res) => {
       maxAge: refreshTokenDays * 24 * 60 * 60 * 1000, // Days to milliseconds
       path: '/' // Available for all paths
     });
-    
+
     // Log token refresh
     AuditLogger.logSecurityEvent('TOKEN_REFRESHED', 'INFO', {
       user_id: user.id,
       ip_address: ipAddress,
       user_agent: userAgent
     });
-    
+
     res.json({
       token: newAccessToken,
       refresh_token_expires_at: newRefreshTokenData.expiresAt,
       message: 'Token refreshed successfully'
     });
-    
+
   } catch (err) {
     console.error('Refresh token error:', err);
     res.status(500).json({
@@ -233,7 +233,7 @@ router.post('/refresh', async (req, res) => {
 router.post('/logout', authMiddleware, async (req, res) => {
   try {
     const user = req.user;
-    
+
     if (!user.jti) {
       return res.status(400).json({
         error: {
@@ -243,29 +243,29 @@ router.post('/logout', authMiddleware, async (req, res) => {
         }
       });
     }
-    
+
     // Calculate TTL based on token expiration
     const now = Math.floor(Date.now() / 1000);
     const ttl = user.exp - now;
-    
+
     if (ttl > 0) {
       // Add access token to blacklist
       await TokenBlacklist.addToBlacklist(user.jti, ttl);
-      
+
       // Log token revocation
       AuditLogger.logTokenRevocation(user.jti, user.sub, 'user_logout');
     }
-    
+
     // Phase 2: Revoke refresh token if present
     const refreshToken = req.cookies?.refresh_token;
     if (refreshToken) {
       await RefreshToken.revokeRefreshToken(refreshToken, 'user_logout');
-      
+
       // Clear refresh token cookie
       res.clearCookie('refresh_token', { path: '/' });
     }
-    
-    res.json({ 
+
+    res.json({
       message: 'Logged out successfully',
       timestamp: new Date().toISOString()
     });
@@ -336,6 +336,34 @@ router.get('/me', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'db_error' });
+  }
+});
+
+const sseService = require('../services/sseService');
+
+// SSE Endpoint for realtime user events
+router.get('/events/sse', (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.status(401).end();
+
+  try {
+    const payload = verifyToken(token);
+    const userId = payload.sub;
+
+    // Set headers for SSE
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no' // Disable Nginx/Kong buffering
+    });
+
+    res.write('retry: 10000\n\n');
+
+    sseService.addClient(userId, res);
+  } catch (e) {
+    console.error('SSE Auth failed:', e);
+    res.status(401).end();
   }
 });
 
