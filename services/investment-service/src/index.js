@@ -206,7 +206,7 @@ async function analyzeInvestmentLogic(symbol, usdt_amount, target_sell_time) {
                     resolve(null);
                     console.warn(`[KAFKA TIMEOUT] Analysis request ${requestId} timed out`);
                 }
-            }, 120000); // 120 seconds timeout
+            }, 1200000); // 20 minutes timeout
 
             pendingAnalysisRequests.set(requestId, { resolve, reject, timeout });
         });
@@ -433,14 +433,40 @@ function sendToUser(userId, data) {
     });
 }
 
-// GET /v1/investments/:user_id - Get user's investments
+// GET /v1/investments/:user_id - Get user's investments with pagination
 app.get('/v1/investments/:user_id', async (req, res) => {
     try {
-        const result = await pool.query(
-            'SELECT * FROM investments WHERE user_id = $1 ORDER BY created_at DESC',
-            [req.params.user_id]
+        const userId = req.params.user_id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        if (page < 1 || limit < 1) {
+            return res.status(400).json({ error: 'Page and limit must be positive integers' });
+        }
+
+        // Get total count
+        const countResult = await pool.query(
+            'SELECT COUNT(*) FROM investments WHERE user_id = $1',
+            [userId]
         );
-        res.json({ investments: result.rows });
+        const total = parseInt(countResult.rows[0].count);
+
+        // Get paginated data
+        const result = await pool.query(
+            'SELECT * FROM investments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+            [userId, limit, offset]
+        );
+
+        res.json({
+            investments: result.rows,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
         console.error('[ERROR] Get investments failed:', error);
         res.status(500).json({ error: 'Internal server error' });

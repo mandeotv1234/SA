@@ -84,45 +84,15 @@ async def process_article_task(item: dict):
         return
 
     # Check directly provided content first (RSS optimization)
+    # DISABLE RSS SHORTCUT to force HTML Fetching & Structure Learning behaviors
     # If we have title + long content, we can skip fetching!
-    if item.get('manual_content') and item.get('manual_title') and len(item['manual_content']) > 500:
-        title_lower = item['manual_title'].lower()
-        content_lower = item['manual_content'].lower()
-        
-        # Skip Google News aggregator
-        if "google news" in title_lower:
-            LOG.debug(f"Skipping Google News aggregator: {url}")
-            return
-        
-        # CRYPTO KEYWORD FILTER
-        if not _is_crypto_related(item['manual_title'], item['manual_content']):
-            LOG.debug(f"Skipping non-crypto article: {item['manual_title'][:60]}...")
-            return
-
-        LOG.info(f"Using direct RSS content for {url}")
-        
-        # Use our extractor helpers just to clean/parse date if needed
-        # Or construct payload directly
-        payload = {
-            'source': urlparse(url).netloc.replace("www.", ""),
-            'url': url,
-            'title': item['manual_title'],
-            'content': item['manual_content'], # This might be HTML, refined by consumer or basic cleanup
-            'published_at': item.get('manual_date'),
-            'category': 'Crypto', # Default or inference
-            'symbol': 'BTCUSDT',  # Simplify for now or run regex
-            'sentiment': 'Neutral',
-            'relevance_score': 1.0 # High confidence since it's from feed
-        }
-        
-        # We might want to run symbol detection on the content
-        # from app.modules.llm_fallback import _detect_symbols
-        # but importing might check logic. Let's do basic cleanup.
-        
-        produce_news(payload)
-        LOG.info(f"Published (RSS Direct): {payload['title']}")
-        redis_client.set(key, 1, ex=REDIS_TTL)
-        return
+    # if item.get('manual_content') and item.get('manual_title') and len(item['manual_content']) > 500:
+    #     title_lower = item['manual_title'].lower()
+    #     # ... (logic commented out) ...
+    #     LOG.info(f"Using direct RSS content for {url}")
+    #     produce_news(payload)
+    #     redis_client.set(key, 1, ex=REDIS_TTL)
+    #     return
 
     # Fallback to standard Fetch & Extract
     host = urlparse(url).netloc

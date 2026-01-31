@@ -113,9 +113,9 @@ services:
   # Investment Service: Protected by JWT
   - name: investment-service
     url: "http://investment-service:8001"
-    connect_timeout: 30000
-    write_timeout: 30000
-    read_timeout: 30000
+    connect_timeout: 300000
+    write_timeout: 300000
+    read_timeout: 300000
     routes:
       - name: investment-route
         paths: ["/invest-api"]

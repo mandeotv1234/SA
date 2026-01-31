@@ -43,7 +43,6 @@ export default function InvestmentSimulator() {
     }, []);
 
     useEffect(() => {
-        loadInvestments();
         connectSSE();
 
         return () => {
@@ -94,18 +93,110 @@ export default function InvestmentSimulator() {
         wsRef.current = eventSource;
     };
 
-    const loadInvestments = async () => {
-        if (!user?.id) return;
+    // Pagination State
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [loadingInvestments, setLoadingInvestments] = useState(false);
+    const investmentCacheRef = useRef({}); // Cache: { page: { investments, totalPages } }
+
+    // Helper to parse messy AI advice
+    const getFormattedAdvice = (rawAdvice) => {
+        if (!rawAdvice) return 'Không có lời khuyên.';
         try {
-            const res = await authFetch(`/v1/investments/${user.id}`);
+            // Check if rawAdvice is a JSON string
+            if (typeof rawAdvice === 'string' && rawAdvice.trim().startsWith('{')) {
+                const obj = JSON.parse(rawAdvice);
+
+                // Case: The 'advice' field itself is a JSON string (double encoded)
+                if (typeof obj.advice === 'string' && obj.advice.trim().startsWith('{')) {
+                    try {
+                        const innerObj = JSON.parse(obj.advice);
+                        // Combine Risk + Action for full context
+                        const parts = [];
+                        
+                        // Support multiple Vietnamese key variants
+                        const riskKey = innerObj['rủi ro'] || innerObj['risk'];
+                        const actionKey = innerObj['khuyến cáo hành động'] 
+                            || innerObj['khuyên hành động'] 
+                            || innerObj['khuyến nghị']
+                            || innerObj['action']
+                            || innerObj['recommendation'];
+                        
+                        if (riskKey) parts.push(`⚠️ ${riskKey}`);
+                        if (actionKey) parts.push(`💡 ${actionKey}`);
+
+                        if (parts.length > 0) return parts.join('\n\n');
+
+                        return innerObj.message || obj.advice;
+                    } catch { /* ignore inner parse error */ }
+                }
+
+                // Fallback for single level JSON
+                const parts = [];
+                const riskKey = obj['rủi ro'] || obj['risk'];
+                const actionKey = obj['khuyến cáo hành động'] 
+                    || obj['khuyên hành động'] 
+                    || obj['khuyến nghị']
+                    || obj['action']
+                    || obj['recommendation'];
+                    
+                if (riskKey) parts.push(`⚠️ ${riskKey}`);
+                if (actionKey) parts.push(`💡 ${actionKey}`);
+                if (parts.length > 0) return parts.join('\n\n');
+
+                return obj.thông_báo || obj.advice || obj.message || Object.values(obj)[0] || rawAdvice;
+            }
+        } catch (e) {
+            console.error("Error parsing advice:", e);
+        }
+        return rawAdvice.replace(/[*#]/g, ''); // Basic clean
+    };
+
+    // UI Helper: Profit/Loss Label
+    const renderProfitLabel = (value, isPercent = false) => {
+        const num = parseFloat(value || 0);
+        const prefix = num > 0 ? '+' : '';
+        const colorClass = num >= 0 ? 'text-up' : 'text-down';
+        return <span className={`text-bold ${colorClass}`}>{prefix}{num.toFixed(2)}{isPercent ? '%' : '$'}</span>;
+    };
+
+    const loadInvestments = async (pageNum = page, forceRefresh = false) => {
+        if (!user?.id) return;
+
+        // Check cache first
+        if (!forceRefresh && investmentCacheRef.current[pageNum]) {
+            const cached = investmentCacheRef.current[pageNum];
+            setInvestments(cached.investments);
+            setTotalPages(cached.totalPages);
+            console.log(`[CACHE HIT] Loaded page ${pageNum} from cache`);
+            return;
+        }
+
+        setLoadingInvestments(true);
+        try {
+            const res = await authFetch(`/v1/investments/${user.id}?page=${pageNum}&limit=5`);
             if (res.ok) {
                 const data = await res.json();
                 setInvestments(data.investments || []);
+                if (data.pagination) {
+                    setTotalPages(data.pagination.totalPages);
+                    // Cache the result
+                    investmentCacheRef.current[pageNum] = {
+                        investments: data.investments || [],
+                        totalPages: data.pagination.totalPages
+                    };
+                }
             }
         } catch (error) {
             console.error('Failed to load investments', error);
+        } finally {
+            setLoadingInvestments(false);
         }
     };
+
+    useEffect(() => {
+        loadInvestments(page);
+    }, [page, user, token]); // Reload when page changes
 
     const handleAnalyze = async (e) => {
         e.preventDefault();
@@ -166,7 +257,11 @@ export default function InvestmentSimulator() {
 
             const data = await res.json();
             if (res.ok) {
-                loadInvestments();
+                // Clear cache and reload
+                investmentCacheRef.current = {};
+                setPage(1); // Go to first page
+                loadInvestments(1, true); // Force refresh
+
                 setNotification({
                     type: 'success',
                     message: 'Đầu tư thành công!',
@@ -182,26 +277,6 @@ export default function InvestmentSimulator() {
         } finally {
             setLoading(false);
         }
-    };
-
-    // Helper to parse messy AI advice
-    const getFormattedAdvice = (rawAdvice) => {
-        if (!rawAdvice) return 'Không có lời khuyên.';
-        try {
-            if (rawAdvice.trim().startsWith('{')) {
-                const obj = JSON.parse(rawAdvice);
-                return obj.thông_báo || obj.advice || obj.message || Object.values(obj)[0] || rawAdvice;
-            }
-        } catch { }
-        return rawAdvice.replace(/[*#]/g, ''); // Basic clean
-    };
-
-    // UI Helper: Profit/Loss Label
-    const renderProfitLabel = (value, isPercent = false) => {
-        const num = parseFloat(value || 0);
-        const prefix = num > 0 ? '+' : '';
-        const colorClass = num >= 0 ? 'text-up' : 'text-down';
-        return <span className={`text-bold ${colorClass}`}>{prefix}{num.toFixed(2)}{isPercent ? '%' : '$'}</span>;
     };
 
     return (
@@ -322,7 +397,7 @@ export default function InvestmentSimulator() {
                                         <div className="stat-item">
                                             <div className="stat-label">Tin cậy</div>
                                             <div className="stat-value" style={{ color: 'var(--accent-yellow)' }}>
-                                                {(analysisResult.confidence * 100).toFixed(0)}%
+                                                {(analysisResult.confidence * 10).toFixed(0)}%
                                             </div>
                                         </div>
                                         <div className="stat-item">
@@ -364,44 +439,85 @@ export default function InvestmentSimulator() {
                                                 <th style={{ textAlign: 'right' }}>Kết Quả</th>
                                             </tr>
                                         </thead>
-                                        <tbody>
-                                            {investments.map(inv => (
-                                                <tr key={inv.id}>
-                                                    <td className="text-bold" style={{ color: 'var(--accent-blue)' }}>{inv.symbol}</td>
-                                                    <td>
-                                                        {new Date(inv.buy_time).toLocaleTimeString()}
-                                                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
-                                                    </td>
-                                                    <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
-                                                    <td>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                            {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
-                                                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
-                                                        </div>
-                                                    </td>
-                                                    <td>
-                                                        <span className={`status-badge ${inv.status === 'active' ? 'status-active' : 'status-closed'}`}>
-                                                            {inv.status === 'active' ? 'Đang chạy' : 'Đã đóng'}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ textAlign: 'right' }} className="text-mono">
-                                                        {inv.status === 'closed' ? (
-                                                            renderProfitLabel(inv.actual_profit_usdt)
-                                                        ) : (
-                                                            <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {investments.length === 0 && (
-                                                <tr>
-                                                    <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                                                        Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
-                                                    </td>
-                                                </tr>
+                                        <tbody style={{ opacity: loadingInvestments ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+                                            {loadingInvestments && investments.length === 0 ? (
+                                                // Loading skeleton
+                                                [...Array(5)].map((_, i) => (
+                                                    <tr key={`skeleton-${i}`}>
+                                                        <td colSpan="6" style={{ padding: '16px' }}>
+                                                            <div style={{
+                                                                height: '20px',
+                                                                background: 'linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%)',
+                                                                backgroundSize: '200% 100%',
+                                                                animation: 'shimmer 1.5s infinite',
+                                                                borderRadius: '4px'
+                                                            }}></div>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                <>
+                                                    {investments.map(inv => (
+                                                        <tr key={inv.id}>
+                                                            <td className="text-bold" style={{ color: 'var(--accent-blue)' }}>{inv.symbol}</td>
+                                                            <td>
+                                                                {new Date(inv.buy_time).toLocaleTimeString()}
+                                                                <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
+                                                            </td>
+                                                            <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
+                                                            <td>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
+                                                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
+                                                                </div>
+                                                            </td>
+                                                            <td>
+                                                                <span className={`status-badge ${inv.status === 'active' ? 'status-active' : 'status-closed'}`}>
+                                                                    {inv.status === 'active' ? 'Đang chạy' : 'Đã đóng'}
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ textAlign: 'right' }} className="text-mono">
+                                                                {inv.status === 'closed' ? (
+                                                                    renderProfitLabel(inv.actual_profit_usdt)
+                                                                ) : (
+                                                                    <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {investments.length === 0 && !loadingInvestments && (
+                                                        <tr>
+                                                            <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                                                Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </>
                                             )}
                                         </tbody>
                                     </table>
+                                </div>
+                                {/* Pagination Controls */}
+                                <div className="pagination-controls" style={{ display: 'flex', justifyContent: 'center', gap: '16px', padding: '16px', borderTop: '1px solid var(--border-color)' }}>
+                                    <button
+                                        className="btn-secondary"
+                                        disabled={page === 1}
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                        style={{ padding: '4px 12px', fontSize: '12px' }}
+                                    >
+                                        &lt; Trước
+                                    </button>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', alignSelf: 'center' }}>
+                                        Trang {page} / {totalPages || 1}
+                                    </span>
+                                    <button
+                                        className="btn-secondary"
+                                        disabled={page >= totalPages}
+                                        onClick={() => setPage(p => p + 1)}
+                                        style={{ padding: '4px 12px', fontSize: '12px' }}
+                                    >
+                                        Sau &gt;
+                                    </button>
                                 </div>
                             </div>
                         </div>

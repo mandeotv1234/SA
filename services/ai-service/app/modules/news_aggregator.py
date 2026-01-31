@@ -129,6 +129,23 @@ def run_scheduled_prediction() -> Dict:
                 icon = '🚀' if direction == 'UP' else ('📉' if direction == 'DOWN' else '➡️')
                 print(f"  {icon} {symbol}: {direction} (Conf: {confidence}%)")
                 print(f"     Causal: {reason_short}...")
+                
+                # 🔥 PUBLISH IMMEDIATELY after processing each symbol
+                try:
+                    single_prediction_payload = {
+                        "meta": {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "model_version": "hybrid_lstm_finbert_v2",
+                            "engine": "Dual-Stream Deep Learning",
+                            "analyzed_articles": len(news_list),
+                            "symbol": symbol  # Add symbol to meta for filtering
+                        },
+                        "predictions": [pred]  # Single prediction
+                    }
+                    produce_ai_insight(single_prediction_payload)
+                    print(f"  [KAFKA-PUBLISH] Sent prediction to 'ai_insights': {symbol}")
+                except Exception as e:
+                    print(f"  [KAFKA ERROR] Failed to publish {symbol}: {e}")
             else:
                 print(f"  [WARN] Skipping {symbol} - insufficient data")
                 
@@ -151,7 +168,7 @@ def run_scheduled_prediction() -> Dict:
     if avg_sentiment > 0.2: sentiment_label = "BULLISH"
     elif avg_sentiment < -0.2: sentiment_label = "BEARISH"
 
-    # Construct final result matching the detailed requested format
+    # Construct final aggregated result (for backward compatibility)
     result_payload = {
         "meta": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -168,10 +185,10 @@ def run_scheduled_prediction() -> Dict:
     global _last_result
     _last_result = result_payload
 
-    # Publish to Kafka
+    # Also publish aggregated result for market overview
     try:
         produce_ai_insight(result_payload)
-        print(f"[KAFKA] Published aggregated_prediction")
+        print(f"[KAFKA] Published aggregated_prediction (all {len(predictions)} symbols)")
     except Exception as e:
         print(f"[KAFKA ERROR] {e}")
     
