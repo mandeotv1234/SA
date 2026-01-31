@@ -114,18 +114,19 @@ class InferenceEngine:
         prob_value = prob.item()
         
         # 6. Interpret Attention & News
+        # 6. Interpret Attention & News
         attn_weights = attn_weights.squeeze().cpu().numpy()
         top_idx = np.argmax(attn_weights)
         top_prob = attn_weights[top_idx] # Attention score
         
-        # Identify Top News
+        # Decide Driver: News vs Technical
+        driver_type = "TECHNICAL"
         top_news_item = None
         top_sources = []
         
         if not news_df.empty:
             # Map sequence index to dataframe index
             # Seq length = 30. Last index corresponds to aligned_df.iloc[-1]
-            # top_idx is relative to the window start.
             window_start_idx = len(aligned_df) - 30
             abs_idx = window_start_idx + top_idx
             
@@ -133,56 +134,65 @@ class InferenceEngine:
                 top_candle_time = aligned_df.iloc[abs_idx]['timestamp']
                 
                 # Find news around this candle
-                mask = (news_df['timestamp'] >= top_candle_time) & (news_df['timestamp'] < top_candle_time + pd.Timedelta(minutes=60)) # widen window
+                mask = (news_df['timestamp'] >= top_candle_time) & (news_df['timestamp'] < top_candle_time + pd.Timedelta(minutes=60)) 
                 relevant_news = news_df[mask]
                 
-                # FALLBACK: If no news in attention window, use LATEST news
-                # This ensures we always have something to explain if news exists
-                if relevant_news.empty and not news_df.empty:
-                    # Sort by timestamp desc
-                    relevant_news = news_df.sort_values('timestamp', ascending=False).head(3)
-                
-                # Filter by symbol relevance if possible
-                # Simple keyword match in title
-                symbol_base = symbol.replace('USDT', '').replace('BTC', 'Bitcoin').replace('ETH', 'Ethereum')
-                
-                symbol_news = relevant_news[relevant_news['title'].str.contains(symbol_base, case=False, na=False)]
-                if not symbol_news.empty:
-                    relevant_news = symbol_news
-
                 if not relevant_news.empty:
-                    top_article = relevant_news.iloc[0]
-                    top_news_item = {
-                        "title": top_article['title'],
-                        "source": top_article['source'],
-                        "sentiment": top_article['sentiment_score']
-                    }
-                    
-                    # Fill sources list
-                    for _, row in relevant_news.head(3).iterrows():
-                        top_sources.append({
-                            "title": row['title'],
-                            "source": row['source'],
-                            "impact_score": round(abs(row['sentiment_score'] * (top_prob * 10)) + 0.1, 2) # Synthetic impact score
-                        })
+                    # Check if attention is strong enough (heuristic threshold)
+                    if top_prob > 0.15:
+                        driver_type = "NEWS"
+                        
+                        symbol_base = symbol.replace('USDT', '').replace('BTC', 'Bitcoin').replace('ETH', 'Ethereum')
+                        symbol_news = relevant_news[relevant_news['title'].str.contains(symbol_base, case=False, na=False)]
+                        
+                        top_article = symbol_news.iloc[0] if not symbol_news.empty else relevant_news.iloc[0]
+                        
+                        top_news_item = {
+                            "title": top_article['title'],
+                            "source": top_article['source'],
+                            "sentiment": top_article['sentiment_score'],
+                            "attention_score": float(top_prob)
+                        }
+                        
+                        # Fill sources list
+                        for _, row in relevant_news.head(3).iterrows():
+                            top_sources.append({
+                                "title": row['title'],
+                                "source": row['source'],
+                                "impact_score": round(abs(row['sentiment_score'] * (top_prob * 10)) + 0.1, 2) 
+                            })
 
         # 7. Construct Rich Forecast
         # Short Term (1h)
         direction_1h = "UP" if prob_value > 0.52 else ("DOWN" if prob_value < 0.48 else "SIDEWAYS")
-        confidence_1h = abs(prob_value - 0.5) * 2 * 100 # 0-100%
+        
+        # Improved confidence calculation
+        # For UP/DOWN: scale from 0-100% based on distance from 0.5
+        # For SIDEWAYS: use inverse - higher when closer to 0.5
+        if direction_1h == "SIDEWAYS":
+            # For SIDEWAYS, confidence is HIGH when prob is close to 0.5
+            # Map 0.48-0.52 range to 60-85% confidence
+            distance_from_center = abs(prob_value - 0.5)
+            max_sideways_distance = 0.02  # 0.48 or 0.52
+            sideways_strength = 1 - (distance_from_center / max_sideways_distance)
+            confidence_1h = 60 + (sideways_strength * 25)  # 60-85%
+        else:
+            # For UP/DOWN, confidence increases with distance from 0.5
+            raw_confidence = abs(prob_value - 0.5) * 2 * 100  # 0-100%
+            # Apply a boost to make it more meaningful (min 40%, max 95%)
+            confidence_1h = min(95, max(40, 40 + raw_confidence * 1.1))
         
         volatility_val = aligned_df['close'].std()
         volatility_label = "HIGH" if volatility_val > (current_price * 0.02) else "MEDIUM"
         if volatility_val < (current_price * 0.005): volatility_label = "LOW"
         
-        # Price Target 1H (Simple linear projection based on prob strength)
-        move_percent_1h = (prob_value - 0.5) * 0.05 # Max 2.5% move assumption for 1h
+        # Price Target 1H 
+        move_percent_1h = (prob_value - 0.5) * 0.05 
         target_price_1h = current_price * (1 + move_percent_1h)
 
-        # Long Term (24h) - Heuristic projection or separate model
-        # For now, amplify 1h trend but dampen with mean reversion
-        direction_24h = direction_1h # Assume trend persistence
-        if confidence_1h < 20: direction_24h = "SIDEWAYS"
+        # Long Term (24h) 
+        direction_24h = direction_1h 
+        if confidence_1h < 50: direction_24h = "SIDEWAYS"
         
         range_low = current_price * 0.95
         range_high = current_price * 1.05
@@ -194,8 +204,11 @@ class InferenceEngine:
             range_low = current_price * 0.92
             range_high = current_price * 1.02
 
-        # 8. Generate Causal Explanation (Vietnamese)
-        causal_analysis = self.generate_rich_explanation(symbol, direction_1h, top_news_item)
+        # 8. Generate True Causal Explanation
+        if driver_type == "NEWS" and top_news_item:
+             causal_analysis = self.generate_news_explanation(symbol, direction_1h, top_news_item)
+        else:
+             causal_analysis = self.generate_technical_explanation(symbol, direction_1h, volatility_label, top_prob)
 
         return {
             "symbol": symbol,
@@ -213,57 +226,79 @@ class InferenceEngine:
                         "low": round(range_low, 2),
                         "high": round(range_high, 2)
                     },
-                    "confidence": round(confidence_1h * 0.8, 1) # Decay confidence
+                    "confidence": round(confidence_1h * 0.8, 1) 
                 }
             },
             "causal_analysis": causal_analysis,
-            "sources": top_sources
+            "sources": top_sources,
+            "debug_metadata": {
+                "driver": driver_type,
+                "attention_score": float(top_prob)
+            }
         }
 
-    def generate_rich_explanation(self, symbol, direction, top_news_item):
+    def generate_news_explanation(self, symbol, direction, top_news_item):
         """
-        Calls Ollama to generate a structured causal analysis in Vietnamese.
+        Calls Ollama to generate a structured causal analysis based on NEWS.
         """
-        # Default fallback
-        fallback = {
-            "primary_driver": "MARKET_SENTIMENT",
-            "key_event": "Biến động thị trường thông thường.",
-            "explanation_vi": f"Mô hình kỹ thuật AI nhận thấy tín hiệu {direction} dựa trên phân tích chuỗi nến lịch sử. Chưa có tin tức cụ thể tác động mạnh trong khung giờ này.",
-            "sentiment_impact": {"news_sentiment": 0, "social_volume": "LOW"}
-        }
-
-        if not top_news_item:
-            return fallback
-
         news_text = top_news_item.get('title', '')
+        attn_score = top_news_item.get('attention_score', 0)
         
         prompt = f"""
         Bạn là chuyên gia Crypto AI. Hãy phân tích tác động của tin tức sau đến giá {symbol}.
-        Tin tức: "{news_text}"
+        Tin tức: "{news_text}" (Độ chú ý của mô hình: {attn_score:.2f})
         Xu hướng dự báo AI: {direction}
         
         Hãy trả về kết quả dưới dạng JSON (không markdown) với cấu trúc sau:
         {{
-            "primary_driver": "MACRO_NEWS" hoặc "ECOSYSTEM_NEWS" hoặc "WHALE_ACTIVITY",
-            "key_event": "Tóm tắt sự kiện chính trong 1 câu ngắn tiếng Anh",
-            "explanation_vi": "Giải thích chi tiết nguyên nhân nhân quả bằng Tiếng Việt (3-4 câu). Tại sao tin này làm giá {direction}? Nhắc đến tâm lý đám đông hoặc cá voi.",
+            "primary_driver": "NEWS_EVENT",
+            "key_event": "Tóm tắt tin tức trong 1 câu ngắn tiếng Anh",
+            "explanation_vi": "Giải thích tại sao tin này dẫn đến xu hướng {direction}. Đề cập đến mức độ quan tâm của thị trường.",
             "sentiment_impact": {{
                 "news_sentiment": (số từ -1 đến 1),
-                "social_volume": "HIGH" hoặc "MEDIUM" hoặc "LOW"
+                "social_volume": "HIGH"
             }}
         }}
         """
+        return self._call_ollama(prompt)
+
+    def generate_technical_explanation(self, symbol, direction, volatility, attn_score):
+        """
+        Generates explanation based on Technical Analysis (No News Driver).
+        """
+        prompt = f"""
+        Bạn là chuyên gia Phân tích Kỹ thuật Crypto. Hiện tại KHÔNG CÓ tin tức quan trọng nào ảnh hưởng đến giá {symbol}.
+        Mô hình Deep Learning dự báo xu hướng: {direction}.
+        Biến động thị trường: {volatility}.
         
+        Hãy trả về kết quả dưới dạng JSON (không markdown) với cấu trúc sau:
+        {{
+            "primary_driver": "TECHNICAL_MOMENTUM",
+            "key_event": "Technical Market Structure Update",
+            "explanation_vi": "Giải thích xu hướng {direction} dựa trên dòng tiền, hành động giá (Price Action) và tâm lý thị trường kỹ thuật. KHÔNG ĐƯỢC BỊA TIN TỨC.",
+            "sentiment_impact": {{
+                "news_sentiment": 0,
+                "social_volume": "LOW"
+            }}
+        }}
+        """
+        return self._call_ollama(prompt)
+
+    def _call_ollama(self, prompt):
         try:
             api_result = self.ollama_client.generate(prompt)
             if api_result:
                 response = self.ollama_client.extract_response(api_result)
                 if response:
                     import json
-                    # Clean response (sometimes Ollama adds Markdown blocks)
                     clean_json = response.replace("```json", "").replace("```", "").strip()
                     return json.loads(clean_json)
         except Exception as e:
             logger.error(f"Ollama generation failed: {e}")
             
-        return fallback
+        return {
+            "primary_driver": "UNKNOWN",
+            "key_event": "Market Analysis",
+            "explanation_vi": "Hệ thống đang cập nhật dữ liệu.",
+            "sentiment_impact": {"news_sentiment": 0, "social_volume": "LOW"}
+        }

@@ -19,19 +19,23 @@ export default function InsightsList() {
     const loadData = async () => {
         setLoading(true);
         try {
-            // Fetch aggregated prediction (latest)
-            const predRes = await authFetch('/v1/insights?type=aggregated_prediction&limit=1');
+            // Fetch latest prediction for current symbol
+            const predRes = await authFetch(`/v1/insights/latest/${currentSymbol}`);
             if (predRes.ok) {
                 const predData = await predRes.json();
-                console.log('[InsightsList] Prediction data:', predData);
-                if (predData.rows && predData.rows.length > 0) {
-                    console.log('[InsightsList] Setting prediction:', predData.rows[0]);
-                    setAggregatedPrediction(predData.rows[0]);
-                } else {
-                    console.warn('[InsightsList] No prediction rows found');
-                }
+                console.log('[InsightsList] Prediction data for', currentSymbol, ':', predData);
+
+                // Transform to match expected format
+                const transformedData = {
+                    time: predData.prediction_time,
+                    payload: predData.data
+                };
+                setAggregatedPrediction(transformedData);
+            } else if (predRes.status === 404) {
+                console.warn('[InsightsList] No prediction found for', currentSymbol);
+                setAggregatedPrediction(null);
             } else {
-                console.error('[InsightsList] Failed to fetch predictions:', predRes.status);
+                console.error('[InsightsList] Failed to fetch prediction:', predRes.status);
             }
 
             // Fetch recent causal events for history
@@ -92,13 +96,13 @@ export default function InsightsList() {
         console.log('[InsightsList] Payload:', payload);
         console.log('[InsightsList] Meta:', meta);
         console.log('[InsightsList] Predictions:', predictions);
-        console.log('[InsightsList] Current symbol:', currentSymbol);
 
-        const currentSymbolPred = predictions.find(p => p.symbol === currentSymbol);
+        // Since we're fetching per-symbol, predictions array should have only 1 item
+        const currentSymbolPred = predictions[0] || null;
         console.log('[InsightsList] Current symbol prediction:', currentSymbolPred);
 
         if (!currentSymbolPred) {
-            console.warn('[InsightsList] No prediction found for symbol:', currentSymbol);
+            console.warn('[InsightsList] No prediction data in payload');
             return (
                 <div className="no-prediction">
                     <AlertTriangle size={20} style={{ opacity: 0.5 }} />
@@ -122,33 +126,67 @@ export default function InsightsList() {
             <div className="aggregated-prediction">
                 {/* Market Overview */}
                 <div className="market-overview">
-                    {getSentimentBadge(meta.market_sentiment_label)}
-                    <span className="news-count">
-                        {meta.analyzed_articles || 0} tin tức
-                    </span>
+                    <div className="overview-left">
+                        {getSentimentBadge(meta.market_sentiment_label)}
+                        <span className="news-count">
+                            {meta.analyzed_articles || 0} tin tức
+                        </span>
+                    </div>
+                    <div className="overview-time">
+                        {new Date(aggregatedPrediction.time).toLocaleTimeString('vi-VN', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })}
+                    </div>
                 </div>
 
                 {/* Current Symbol Prediction - 1H Forecast */}
                 <div className="current-symbol-pred">
                     <div className="pred-header">Dự đoán {currentSymbol} - 1 Giờ Tới</div>
-                    <div className="pred-main" style={{ color: getDirectionStyle(forecast1h.direction).color }}>
-                        {getDirectionStyle(forecast1h.direction).icon}
-                        <span className="direction">{getDirectionStyle(forecast1h.direction).label}</span>
-                        <span className="price-target">
-                            → ${forecast1h.expected_price?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                    </div>
-                    <div className="pred-details">
-                        <span className="detail-item">
-                            <strong>Giá hiện tại:</strong> ${currentSymbolPred.current_price?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                        <span className="detail-item">
-                            <strong>Độ tin cậy:</strong> {forecast1h.confidence?.toFixed(1)}%
-                        </span>
-                        <span className="detail-item">
-                            <strong>Biến động:</strong> {forecast1h.volatility}
-                        </span>
-                    </div>
+                    {(() => {
+                        const currentPrice = currentSymbolPred.current_price || 0;
+                        const expectedPrice = forecast1h.expected_price || 0;
+                        const priceChange = expectedPrice - currentPrice;
+                        const changePercent = currentPrice > 0 ? (priceChange / currentPrice) * 100 : 0;
+
+                        // Determine actual direction based on price change
+                        let actualDirection = 'SIDEWAYS';
+                        if (Math.abs(changePercent) < 0.01) {
+                            actualDirection = 'SIDEWAYS';
+                        } else if (changePercent > 0) {
+                            actualDirection = 'UP';
+                        } else {
+                            actualDirection = 'DOWN';
+                        }
+
+                        const style = getDirectionStyle(actualDirection);
+
+                        return (
+                            <>
+                                <div className="pred-main" style={{ color: style.color }}>
+                                    {style.icon}
+                                    <span className="direction">{style.label}</span>
+                                    <span className="price-change">
+                                        {changePercent > 0 ? '+' : ''}{changePercent.toFixed(2)}%
+                                    </span>
+                                    <span className="price-target">
+                                        → ${expectedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                                <div className="pred-details">
+                                    <span className="detail-item">
+                                        <strong>Giá ở lần phân tích:</strong> ${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <span className="detail-item">
+                                        <strong>Độ tin cậy:</strong> {forecast1h.confidence?.toFixed(1)}%
+                                    </span>
+                                    <span className="detail-item">
+                                        <strong>Biến động:</strong> {forecast1h.volatility}
+                                    </span>
+                                </div>
+                            </>
+                        );
+                    })()}
                 </div>
 
                 {/* 24H Forecast */}
@@ -218,36 +256,19 @@ export default function InsightsList() {
                     </div>
                 )}
 
-                {/* Other Symbols - Compact Grid */}
-                <div className="other-symbols-section">
-                    <div className="section-header">Các Cặp Khác</div>
-                    <div className="predictions-mini-grid">
-                        {predictions.filter(p => p.symbol !== currentSymbol).map((pred, idx) => {
-                            const f1h = pred.forecast?.next_1h || {};
-                            const style = getDirectionStyle(f1h.direction);
-                            return (
-                                <div
-                                    key={idx}
-                                    className="pred-mini-card"
-                                    style={{ borderColor: style.color }}
-                                >
-                                    <div className="symbol">{pred.symbol?.replace('USDT', '')}</div>
-                                    <div className="direction" style={{ color: style.color }}>
-                                        {style.icon}
-                                        <span>{f1h.confidence?.toFixed(0)}%</span>
-                                    </div>
-                                    <div className="mini-price">
-                                        ${pred.current_price?.toFixed(2)}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-
                 {/* Timestamp */}
                 <div className="pred-timestamp">
-                    Cập nhật: {new Date(aggregatedPrediction.time).toLocaleString('vi-VN')}
+                    <div className="timestamp-label">⏱️ Thời gian phân tích:</div>
+                    <div className="timestamp-value">
+                        {new Date(aggregatedPrediction.time).toLocaleString('vi-VN', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                        })}
+                    </div>
                 </div>
             </div>
         );
@@ -386,7 +407,24 @@ export default function InsightsList() {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
+                    margin-bottom: 4px;
                 }
+                
+                .overview-left {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                
+                .overview-time {
+                    font-size: 10px;
+                    color: var(--accent-yellow);
+                    font-weight: 600;
+                    background: rgba(255, 193, 7, 0.1);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                }
+                
                 
                 .sentiment-badge {
                     font-size: 11px;
@@ -436,6 +474,15 @@ export default function InsightsList() {
                     font-size: 16px;
                     font-weight: bold;
                     margin-bottom: 8px;
+                    flex-wrap: wrap;
+                }
+                
+                .current-symbol-pred .price-change {
+                    font-size: 15px;
+                    font-weight: 700;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    background: rgba(255,255,255,0.1);
                 }
 
                 .current-symbol-pred .price-target {
@@ -643,11 +690,27 @@ export default function InsightsList() {
                     color: #999;
                 }
                 
+                
                 .pred-timestamp {
-                    font-size: 9px;
-                    color: #555;
-                    text-align: right;
+                    background: rgba(255,255,255,0.03);
+                    border-radius: 6px;
+                    padding: 8px 10px;
+                    margin-top: 8px;
+                    border-left: 2px solid var(--accent-yellow);
                 }
+                
+                .pred-timestamp .timestamp-label {
+                    font-size: 10px;
+                    color: #888;
+                    margin-bottom: 4px;
+                }
+                
+                .pred-timestamp .timestamp-value {
+                    font-size: 11px;
+                    color: #bbb;
+                    font-weight: 500;
+                }
+                
                 
                 .history-list {
                     display: flex;

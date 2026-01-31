@@ -419,7 +419,7 @@ services:
       - ./services/investment-service:/app
       - /app/node_modules
     healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
+      test: [ "CMD-SHELL", "wget --spider -q http://localhost:8001/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5

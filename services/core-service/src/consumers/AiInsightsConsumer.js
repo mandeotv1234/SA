@@ -53,11 +53,25 @@ const run = async () => {
 
         const client = await db.pool.connect();
         try {
+          // Extract symbol for per-symbol predictions
+          let symbol = null;
+
+          // Try to get symbol from meta (new format)
+          if (payload.meta && payload.meta.symbol) {
+            symbol = payload.meta.symbol;
+          }
+          // Or from first prediction
+          else if (payload.predictions && payload.predictions.length > 0) {
+            symbol = payload.predictions[0].symbol;
+          }
+
           await client.query(
-            `INSERT INTO ai_insights (time, type, payload) VALUES ($1, $2, $3)`,
-            [time, type, JSON.stringify(body)]
+            `INSERT INTO ai_insights (time, type, symbol, payload) VALUES ($1, $2, $3, $4)`,
+            [time, type, symbol, JSON.stringify(body)]
           );
-          console.log(`[DB-INSERTED] AI insight type='${type}' saved to database`);
+
+          const symbolInfo = symbol ? ` symbol='${symbol}'` : '';
+          console.log(`[DB-INSERTED] AI insight type='${type}'${symbolInfo} saved to database`);
         } catch (err) {
           console.error('[DB-ERROR] Error inserting ai_insight:', err);
         } finally {

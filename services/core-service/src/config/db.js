@@ -66,8 +66,27 @@ const initDB = async () => {
       CREATE TABLE IF NOT EXISTS ai_insights (
         time TIMESTAMPTZ NOT NULL,
         type TEXT,
+        symbol TEXT,
         payload JSONB
       );
+    `);
+
+    // Migration: Add symbol column if it doesn't exist (for existing tables)
+    try {
+      await client.query(`
+        ALTER TABLE ai_insights 
+        ADD COLUMN IF NOT EXISTS symbol TEXT;
+      `);
+      console.log('✅ ai_insights schema migrated (symbol column added if needed)');
+    } catch (migErr) {
+      console.warn('⚠️ ai_insights migration warning:', migErr.message);
+    }
+
+    // Create index for faster symbol queries
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_insights_symbol_time 
+      ON ai_insights(symbol, time DESC) 
+      WHERE symbol IS NOT NULL;
     `);
 
     const checkExt = await client.query(`SELECT extname FROM pg_extension WHERE extname = 'timescaledb';`);

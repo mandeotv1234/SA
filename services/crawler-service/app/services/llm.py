@@ -18,6 +18,7 @@ def generate_extraction_rules(html_snippet: str, url: str) -> dict | None:
 3. Main Content Body
 
 Return ONLY a valid JSON object with keys: "title_selector", "date_selector", "content_selector".
+Optional keys if available: "sentiment_selector", "reviews_selector".
 Do not include markdown formatting or explanations.
 """
     
