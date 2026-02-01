@@ -24,14 +24,16 @@ app.get('/profile', authMiddleware, async (req, res) => {
 app.get('/health', (req, res) => res.json({ alive: true }));
 
 const startPaymentConsumer = require('./consumers/PaymentSuccessConsumer');
+const { initProducer } = require('./utils/kafkaProducer');
 
-// Initialize Redis and DB
+// Initialize Redis, DB, and Kafka Producer
 Promise.all([
   initDB(),
-  getRedisClient()
+  getRedisClient(),
+  initProducer()
 ]).then(() => {
-  console.log('✓ Database and Redis connected');
-  
+  console.log('✓ Database, Redis, and Kafka Producer connected');
+
   app.listen(PORT, () => {
     console.log(`Auth Service listening on ${PORT}`);
 

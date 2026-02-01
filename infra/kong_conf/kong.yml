@@ -48,6 +48,33 @@ services:
           claims_to_verify: ["exp"]
           uri_param_names: ["token"]
 
+  - name: investment-service-analyze
+    url: "http://investment-service:8001/v1/investments/analyze"
+    connect_timeout: 1200000
+    write_timeout: 1200000
+    read_timeout: 1200000
+    routes:
+      - name: investment-analyze-route
+        paths: ["/invest-api/v1/investments/analyze"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          uri_param_names: ["token"]
+
+  - name: notification-service
+    url: "http://notification-service:3000"
+    routes:
+      - name: notification-api-route
+        paths: ["/notification-api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          uri_param_names: ["token"]
+
   - name: payment-service
     url: "http://payment-service:3000"
     routes:

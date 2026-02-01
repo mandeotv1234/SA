@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
 import { useToast } from './ToastProvider';
-import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity, Lock, ChevronDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity, Lock, ChevronDown, Bell, BellOff } from 'lucide-react';
 
 export default function InvestmentSimulator() {
     const { authFetch, user, symbol, token, isVip } = useStore();
@@ -20,9 +20,86 @@ export default function InvestmentSimulator() {
 
     // Popup State
     const [showConfirmModal, setShowConfirmModal] = useState(false);
-    const [notification, setNotification] = useState(null); // { type: 'success'|'info'|'closed', message, data }
+    const [notification, setNotification] = useState(null);
+    const [userEmail, setUserEmail] = useState(null);
+    const [predNotifEnabled, setPredNotifEnabled] = useState(false);
+    const [invNotifEnabled, setInvNotifEnabled] = useState(false); // { type: 'success'|'info'|'closed', message, data }
 
     const wsRef = useRef(null);
+
+    // Notification Logic
+    useEffect(() => {
+        if (user?.email) setUserEmail(user.email);
+    }, [user]);
+
+    // Load notification settings from auth-service
+    useEffect(() => {
+        if (!user?.id) return;
+        const fetchSettings = async () => {
+            try {
+                const res = await authFetch('/auth/notifications/settings');
+                if (res.ok) {
+                    const settings = await res.json();
+                    // settings = {prediction_symbols: [...], investment_enabled: true/false}
+                    setPredNotifEnabled(settings.prediction_symbols?.includes(selectedSymbol) || false);
+                    setInvNotifEnabled(settings.investment_enabled || false);
+                }
+            } catch (e) {
+                console.warn('[NOTIF] Failed to load settings:', e);
+            }
+        };
+        fetchSettings();
+    }, [user?.id, selectedSymbol]);
+
+    const handleToggleNotif = async () => {
+        if (!user?.id) {
+            showToast('Vui lòng đăng nhập để sử dụng tính năng này!', 'error');
+            return;
+        }
+
+        const newState = !predNotifEnabled;
+
+        // Optimistic update
+        setPredNotifEnabled(newState);
+        if (newState) setInvNotifEnabled(true);
+
+        try {
+            // Update Prediction Setting
+            const p1 = authFetch('/auth/notifications/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: 'PREDICTION',
+                    symbol: selectedSymbol,
+                    enabled: newState
+                })
+            });
+
+            // Update Investment Setting (Force Enable if enabling prediction, otherwise keep as is or disable? Let's sync it)
+            // Let's force ENABLE investment notifs if user enables prediction. 
+            // If user disables prediction, we leave investment notifs as is (maybe they have other coins)
+            const promises = [p1];
+            if (newState) {
+                promises.push(
+                    authFetch('/auth/notifications/settings', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            type: 'INVESTMENT',
+                            enabled: true
+                        })
+                    })
+                );
+            }
+
+            await Promise.all(promises);
+
+            showToast(`Đã ${newState ? 'bật' : 'tắt'} thông báo email`, 'success');
+        } catch (e) {
+            console.error('[NOTIF] Error:', e);
+            // Revert on error
+            setPredNotifEnabled(!newState);
+            showToast('Lỗi lưu cài đặt', 'error');
+        }
+    };
 
     useEffect(() => {
         if (symbol) setSelectedSymbol(symbol);
@@ -69,10 +146,14 @@ export default function InvestmentSimulator() {
 
                 if (data.type === 'investment_created') {
                     console.log('[SSE] Investment created event received');
-                    loadInvestments();
+                    // Invalidate cache and reload current page
+                    investmentCacheRef.current = {};
+                    loadInvestments(page, true);
                 } else if (data.type === 'investment_closed') {
                     console.log('[SSE] Investment closed event received, showing popup');
-                    loadInvestments();
+                    // Invalidate cache and reload current page
+                    investmentCacheRef.current = {};
+                    loadInvestments(page, true);
                     setNotification({
                         type: 'closed',
                         message: 'Lệnh đầu tư đã kết thúc!',
@@ -99,57 +180,62 @@ export default function InvestmentSimulator() {
     const [loadingInvestments, setLoadingInvestments] = useState(false);
     const investmentCacheRef = useRef({}); // Cache: { page: { investments, totalPages } }
 
-    // Helper to parse messy AI advice
+
+
+    // Helper to parse and format AI advice
     const getFormattedAdvice = (rawAdvice) => {
         if (!rawAdvice) return 'Không có lời khuyên.';
+
         try {
-            // Check if rawAdvice is a JSON string
+            let adviceObj = null;
+
+            // Parse if it's a JSON string
             if (typeof rawAdvice === 'string' && rawAdvice.trim().startsWith('{')) {
-                const obj = JSON.parse(rawAdvice);
-
-                // Case: The 'advice' field itself is a JSON string (double encoded)
-                if (typeof obj.advice === 'string' && obj.advice.trim().startsWith('{')) {
-                    try {
-                        const innerObj = JSON.parse(obj.advice);
-                        // Combine Risk + Action for full context
-                        const parts = [];
-                        
-                        // Support multiple Vietnamese key variants
-                        const riskKey = innerObj['rủi ro'] || innerObj['risk'];
-                        const actionKey = innerObj['khuyến cáo hành động'] 
-                            || innerObj['khuyên hành động'] 
-                            || innerObj['khuyến nghị']
-                            || innerObj['action']
-                            || innerObj['recommendation'];
-                        
-                        if (riskKey) parts.push(`⚠️ ${riskKey}`);
-                        if (actionKey) parts.push(`💡 ${actionKey}`);
-
-                        if (parts.length > 0) return parts.join('\n\n');
-
-                        return innerObj.message || obj.advice;
-                    } catch { /* ignore inner parse error */ }
-                }
-
-                // Fallback for single level JSON
-                const parts = [];
-                const riskKey = obj['rủi ro'] || obj['risk'];
-                const actionKey = obj['khuyến cáo hành động'] 
-                    || obj['khuyên hành động'] 
-                    || obj['khuyến nghị']
-                    || obj['action']
-                    || obj['recommendation'];
-                    
-                if (riskKey) parts.push(`⚠️ ${riskKey}`);
-                if (actionKey) parts.push(`💡 ${actionKey}`);
-                if (parts.length > 0) return parts.join('\n\n');
-
-                return obj.thông_báo || obj.advice || obj.message || Object.values(obj)[0] || rawAdvice;
+                adviceObj = JSON.parse(rawAdvice);
+            } else if (typeof rawAdvice === 'object') {
+                adviceObj = rawAdvice;
+            } else {
+                return rawAdvice; // Return as-is if not JSON
             }
+
+            // Extract the three main parts with various key variants
+            const recommendation = adviceObj['khuyến cáo']
+                || adviceObj['recommendation']
+                || adviceObj['advice']
+                || adviceObj['lời khuyên'];
+
+            const risk = adviceObj['rủi ro']
+                || adviceObj['risk']
+                || adviceObj['cảnh báo'];
+
+            const action = adviceObj['hành động']
+                || adviceObj['action']
+                || adviceObj['khuyến cáo hành động']
+                || adviceObj['khuyên hành động'];
+
+            // Build formatted output
+            const parts = [];
+            if (recommendation) parts.push(`💡 ${recommendation}`);
+            if (risk) parts.push(`⚠️ ${risk}`);
+            if (action) parts.push(`🎯 ${action}`);
+
+            if (parts.length > 0) return parts.join('\n\n');
+
+            // Fallback: Join all string values found in the object
+            // This handles cases like {"thông_báo": "..."} clean text
+            const allValues = Object.values(adviceObj)
+                .filter(val => typeof val === 'string' && val.trim().length > 0);
+
+            if (allValues.length > 0) {
+                return allValues.join('\n\n');
+            }
+
+            return typeof adviceObj === 'string' ? adviceObj : JSON.stringify(adviceObj);
+
         } catch (e) {
             console.error("Error parsing advice:", e);
+            return rawAdvice; // Return raw if parsing fails
         }
-        return rawAdvice.replace(/[*#]/g, ''); // Basic clean
     };
 
     // UI Helper: Profit/Loss Label
@@ -314,18 +400,29 @@ export default function InvestmentSimulator() {
                                 <form onSubmit={handleAnalyze}>
                                     <div className="input-group">
                                         <label>Cặp Coin</label>
-                                        <div className="input-wrapper">
-                                            <select
-                                                value={selectedSymbol}
-                                                onChange={(e) => setSelectedSymbol(e.target.value)}
-                                                className="styled-input"
-                                                style={{ paddingLeft: '12px', paddingRight: '32px', appearance: 'none', cursor: 'pointer' }}
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <div className="input-wrapper" style={{ flex: 1 }}>
+                                                <select
+                                                    value={selectedSymbol}
+                                                    onChange={(e) => setSelectedSymbol(e.target.value)}
+                                                    className="styled-input"
+                                                    style={{ paddingLeft: '12px', paddingRight: '32px', appearance: 'none', cursor: 'pointer' }}
+                                                >
+                                                    {['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOTUSDT', 'POLUSDT'].map(s => (
+                                                        <option key={s} value={s}>{s}</option>
+                                                    ))}
+                                                </select>
+                                                <ChevronDown className="input-icon" size={18} style={{ left: 'auto', right: '12px', color: 'var(--text-secondary)' }} />
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleToggleNotif()}
+                                                className="btn-secondary"
+                                                style={{ width: '42px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                title={`Nhận thông báo email dự báo cho ${selectedSymbol}`}
                                             >
-                                                {['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOTUSDT', 'POLUSDT'].map(s => (
-                                                    <option key={s} value={s}>{s}</option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown className="input-icon" size={18} style={{ left: 'auto', right: '12px', color: 'var(--text-secondary)' }} />
+                                                {predNotifEnabled ? <Bell size={18} fill="#2563eb" color="#2563eb" /> : <BellOff size={18} />}
+                                            </button>
                                         </div>
                                     </div>
 
@@ -424,8 +521,9 @@ export default function InvestmentSimulator() {
                         {/* Right: History & Active Investments */}
                         <div className="history-col">
                             <div className="investment-table-container">
-                                <div className="table-header">
-                                    Danh Sách Đầu Tư Của Bạn
+                                <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>Danh Sách Đầu Tư Của Bạn</span>
+
                                 </div>
                                 <div className="simulator-table-wrapper">
                                     <table className="simulator-table">
@@ -433,8 +531,10 @@ export default function InvestmentSimulator() {
                                             <tr>
                                                 <th>Coin</th>
                                                 <th>Thời Gian Mua</th>
+                                                <th>Thời Gian Bán</th>
                                                 <th>Giá Mua</th>
-                                                <th>Dự Đoán AI</th>
+                                                <th>Giá Bán</th>
+                                                <th>AI Dự Báo (Giá)</th>
                                                 <th>Trạng Thái</th>
                                                 <th style={{ textAlign: 'right' }}>Kết Quả</th>
                                             </tr>
@@ -444,7 +544,7 @@ export default function InvestmentSimulator() {
                                                 // Loading skeleton
                                                 [...Array(5)].map((_, i) => (
                                                     <tr key={`skeleton-${i}`}>
-                                                        <td colSpan="6" style={{ padding: '16px' }}>
+                                                        <td colSpan="8" style={{ padding: '16px' }}>
                                                             <div style={{
                                                                 height: '20px',
                                                                 background: 'linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%)',
@@ -464,11 +564,32 @@ export default function InvestmentSimulator() {
                                                                 {new Date(inv.buy_time).toLocaleTimeString()}
                                                                 <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.buy_time).toLocaleDateString()}</div>
                                                             </td>
+                                                            <td>
+                                                                {inv.sell_time ? (
+                                                                    <>
+                                                                        {new Date(inv.sell_time).toLocaleTimeString()}
+                                                                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{new Date(inv.sell_time).toLocaleDateString()}</div>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <span style={{ color: 'var(--text-secondary)' }}>{new Date(inv.target_sell_time).toLocaleTimeString()}</span>
+                                                                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Dự kiến</div>
+                                                                    </>
+                                                                )}
+                                                            </td>
                                                             <td className="text-mono">${parseFloat(inv.buy_price).toLocaleString()}</td>
+                                                            <td className="text-mono">
+                                                                {inv.sell_price ? `$${parseFloat(inv.sell_price).toLocaleString()}` : <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: '11px' }}>---</span>}
+                                                            </td>
                                                             <td>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                                     {inv.ai_prediction?.direction === 'UP' ? <TrendingUp size={16} className="text-up" /> : <TrendingDown size={16} className="text-down" />}
-                                                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>({(inv.ai_prediction?.confidence || 0)}/5)</span>
+                                                                    <span style={{ fontSize: '12px', fontWeight: '500' }}>
+                                                                        ${(parseFloat(inv.buy_price) * (1 + (inv.ai_prediction?.change_percent || 0) / 100)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                                                    </span>
+                                                                </div>
+                                                                <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginLeft: '20px' }}>
+                                                                    {inv.ai_prediction?.change_percent > 0 ? '+' : ''}{(inv.ai_prediction?.change_percent || 0).toFixed(2)}%
                                                                 </div>
                                                             </td>
                                                             <td>
@@ -487,7 +608,7 @@ export default function InvestmentSimulator() {
                                                     ))}
                                                     {investments.length === 0 && !loadingInvestments && (
                                                         <tr>
-                                                            <td colSpan="6" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                                            <td colSpan="8" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                                                                 Chưa có lệnh đầu tư nào. Hãy bắt đầu phân tích!
                                                             </td>
                                                         </tr>

@@ -57,7 +57,7 @@ const useStore = create((set, get) => ({
     try {
       if (!token) return null;
       const payload = JSON.parse(atob(token.split('.')[1]));
-      return { id: payload.sub, email: payload.sub, role: payload.role };
+      return { id: payload.sub, email: payload.email, role: payload.role };
     } catch (e) {
       console.error('Failed to decode token', e);
       return null;

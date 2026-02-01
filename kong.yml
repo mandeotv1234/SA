@@ -146,6 +146,38 @@ services:
         config:
           allowed_payload_size: 1
 
+  # Investment Analysis with extended timeout (10 mins)
+  - name: investment-service-analyze
+    url: "http://investment-service:8001/v1/investments/analyze"
+    connect_timeout: 600000
+    write_timeout: 600000
+    read_timeout: 600000
+    routes:
+      - name: investment-analyze-route
+        paths: ["/invest-api/v1/investments/analyze"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          key_claim_name: "iss"
+          anonymous: null
+      
+      - name: rate-limiting
+        config:
+          minute: 20    # Stricter for heavy analysis
+          hour: 200
+          policy: local
+          limit_by: credential
+      
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-User-Id:$(claims.sub)"
+              - "X-User-Email:$(claims.email)"
+              - "X-Is-VIP:$(claims.is_vip)"
+
   # Payment Service: Protected by JWT with stricter limits
   - name: payment-service
     url: "http://payment-service:8002"

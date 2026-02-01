@@ -34,11 +34,12 @@ async function initDB() {
     `);
     console.log("   → users table ensured (base)");
 
-    // Ensure columns exist (Add is_vip)
+    // Ensure columns exist (Add is_vip and notification_settings)
     const alterStmts = [
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS email text;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS password text;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip boolean DEFAULT false;`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_settings JSONB DEFAULT '{"prediction_symbols": [], "investment_enabled": false}'::jsonb;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();`
     ];
     for (const s of alterStmts) {

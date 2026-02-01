@@ -449,6 +449,44 @@ services:
       timeout: 5s
       retries: 5
 
+  notification-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: notification_db
+    volumes:
+      - notification_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U dev -d notification_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+      - default
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    environment:
+      POSTGRES_HOST: notification-db
+      KAFKA_BROKERS: kafka:9092
+      SMTP_EMAIL: ${SMTP_EMAIL}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      FE_URL: http://localhost:5173
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./services/notification-service:/app
+      - /app/node_modules
+    networks:
+      - internal
+      - default
+
 volumes:
   pgdata:
     driver: local
@@ -461,6 +499,8 @@ volumes:
   mongo_crawler_data:
     driver: local
   investment_pgdata:
+    driver: local
+  notification_pgdata:
     driver: local
 
 networks:

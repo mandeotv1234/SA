@@ -258,7 +258,7 @@ export default function Watchlist() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder='Search symbol...'
+          placeholder='Tìm kiếm...'
           style={styles.searchInput}
         />
       </div>

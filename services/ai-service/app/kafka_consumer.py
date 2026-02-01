@@ -6,6 +6,7 @@ Kafka Consumer for AI Service.
 """
 import os
 import json
+from threading import Thread
 from confluent_kafka import Consumer, KafkaError
 from app.modules.sentiment import analyze_sentiment_text
 from app.kafka_producer import produce_news_analyzed
@@ -53,7 +54,7 @@ def start_consumer():
     print(f"\n{'='*60}")
     print(f"AI SERVICE CONSUMER STARTED")
     print(f"Topics: {', '.join(TOPICS)}")
-    print(f"Mode: SCHEDULED PREDICTION (every 5 minutes)")
+    print(f"Mode: MULTI-THREADED ANALYSIS + SCHEDULED PREDICTION")
     print(f"{'='*60}\n")
     
     try:
@@ -90,24 +91,9 @@ def start_consumer():
             
             # Handle Investment Analysis Request
             if msg.topic() == "investment.analysis.request":
-                try:
-                    from app.modules.investment_advisor import analyze_investment
-                    from app.kafka_producer import produce_investment_result
-                    
-                    print(f"[KAFKA] Investment Analysis Request for {j.get('symbol')}")
-                    
-                    # Analyze
-                    advice_result = analyze_investment(j)
-                    # Merge original request data for correlation (specifically requestId)
-                    # We merge the result INTO the request data (or vice versa) to ensure requestId is passed back
-                    final_result = {**j, **advice_result} 
-                    
-                    # Publish Result
-                    produce_investment_result(final_result)
-                    print(f"[KAFKA] Sent Investment Analysis Result for {j.get('symbol')}")
-                    
-                except Exception as e:
-                    print(f"[KAFKA ERROR] Investment analysis failed: {e}")
+                # Run analysis in a separate thread to prevent blocking the consumer loop
+                t = Thread(target=handle_analysis_request, args=(j,))
+                t.start()
                 continue
 
             title = j.get("title") or ""
@@ -186,3 +172,28 @@ def start_consumer():
     finally:
         consumer.close()
         print("[CONSUMER] Closed")
+
+
+def handle_analysis_request(payload):
+    """
+    Handle individual investment analysis request in a separate thread.
+    """
+    try:
+        from app.modules.investment_advisor import analyze_investment
+        from app.kafka_producer import produce_investment_result
+        
+        symbol = payload.get('symbol', 'UNKNOWN')
+        print(f"[KAFKA-THREAD] Processing Analysis Request for {symbol}...")
+        
+        # Analyze (this might take time)
+        advice_result = analyze_investment(payload)
+        
+        # Merge results
+        final_result = {**payload, **advice_result} 
+        
+        # Publish Result
+        produce_investment_result(final_result)
+        print(f"[KAFKA-THREAD] ✓ Sent Analysis Result for {symbol}")
+        
+    except Exception as e:
+        print(f"[KAFKA-THREAD ERROR] Analysis failed for {payload.get('symbol')}: {e}")

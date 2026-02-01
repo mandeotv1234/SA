@@ -26,7 +26,7 @@ export default function SymbolSelector() {
                         <input
                             autoFocus
                             className="search-input"
-                            placeholder="Search..."
+                            placeholder="Tìm kiếm..."
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                         />
@@ -41,7 +41,7 @@ export default function SymbolSelector() {
                                 {s}
                             </div>
                         ))}
-                        {filtered.length === 0 && <div style={{ padding: 12, fontSize: 12, color: '#777' }}>No results</div>}
+                        {filtered.length === 0 && <div style={{ padding: 12, fontSize: 12, color: '#777' }}>Không tìm thấy kết quả</div>}
                     </div>
                 </div>
             )}

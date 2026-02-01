@@ -77,7 +77,7 @@ export default function UpgradeModal({ onClose }) {
 
     const copyToClipboard = (text) => {
         navigator.clipboard.writeText(text);
-        showToast('Copied to clipboard!', 'success');
+        showToast('Đã sao chép vào bộ nhớ đệm!', 'success');
     };
 
     const formatTime = (ms) => {
@@ -105,22 +105,22 @@ export default function UpgradeModal({ onClose }) {
                     <X size={20} />
                 </button>
 
-                <h2 style={{ fontSize: 20, marginBottom: 16, textAlign: 'center' }}>Upgrade to VIP</h2>
+                <h2 style={{ fontSize: 20, marginBottom: 16, textAlign: 'center' }}>Nâng cấp VIP</h2>
 
                 {step === 1 && (
                     <div>
                         <p style={{ color: '#9ca3af', marginBottom: 24, textAlign: 'center' }}>
-                            Unlock exclusive AI insights and real-time predictions.
+                            Mở khóa các phân tích AI chuyên sâu và nhận dự báo thời gian thực.
                         </p>
 
                         <div style={{ backgroundColor: '#2a2e39', padding: 16, borderRadius: 8, marginBottom: 24 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                                <span style={{ color: '#9ca3af' }}>Price</span>
+                                <span style={{ color: '#9ca3af' }}>Giá tiền</span>
                                 <span style={{ fontWeight: 'bold', color: '#26a69a' }}>10,000 VNĐ</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ color: '#9ca3af' }}>Plan</span>
-                                <span style={{ fontWeight: 'bold' }}>Lifetime Access</span>
+                                <span style={{ color: '#9ca3af' }}>Gói dịch vụ</span>
+                                <span style={{ fontWeight: 'bold' }}>Truy cập trọn đời</span>
                             </div>
                         </div>
 
@@ -129,7 +129,7 @@ export default function UpgradeModal({ onClose }) {
                             className="login-btn"
                             style={{ width: '100%', padding: 12, borderRadius: 4, cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
                         >
-                            Continue to Payment
+                            Tiếp tục thanh toán
                         </button>
                     </div>
                 )}
@@ -139,28 +139,28 @@ export default function UpgradeModal({ onClose }) {
                         {loadingCode ? <div style={{ textAlign: 'center' }}><Loader className="spin" /></div> : (
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                 <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16, textAlign: 'center' }}>
-                                    Scan QR code to pay instantly
+                                    Quét mã QR để thanh toán ngay
                                 </p>
 
                                 <div style={{ backgroundColor: 'white', padding: 12, borderRadius: 8, marginBottom: 16 }}>
                                     <img
                                         src={`https://img.vietqr.io/image/${MY_BANK.BANK_ID}-${MY_BANK.ACCOUNT_NO}-${MY_BANK.TEMPLATE}.png?amount=10000&addInfo=VIP%20${userId}&accountName=${encodeURIComponent(MY_BANK.ACCOUNT_NAME)}`}
-                                        alt="Payment QR Code"
+                                        alt="Mã QR Thanh Toán"
                                         style={{ width: '200px', height: 'auto' }}
                                     />
                                 </div>
 
                                 <div style={{ width: '100%', marginBottom: 16, fontSize: 13, color: '#e5e7eb' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
-                                        <span style={{ color: '#9ca3af' }}>Bank</span>
+                                        <span style={{ color: '#9ca3af' }}>Ngân hàng</span>
                                         <span style={{ fontWeight: 'bold' }}>MB Bank</span>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
-                                        <span style={{ color: '#9ca3af' }}>Account Name</span>
+                                        <span style={{ color: '#9ca3af' }}>Chủ tài khoản</span>
                                         <span style={{ fontWeight: 'bold' }}>{MY_BANK.ACCOUNT_NAME}</span>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
-                                        <span style={{ color: '#9ca3af' }}>Account No.</span>
+                                        <span style={{ color: '#9ca3af' }}>Số tài khoản</span>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                             <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>{MY_BANK.ACCOUNT_NO}</span>
                                             <button onClick={() => copyToClipboard(MY_BANK.ACCOUNT_NO)} style={{ background: 'none', border: 'none', color: '#26a69a', cursor: 'pointer', padding: 0 }}>
@@ -169,11 +169,11 @@ export default function UpgradeModal({ onClose }) {
                                         </div>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #2a2e39', paddingBottom: 8 }}>
-                                        <span style={{ color: '#9ca3af' }}>Amount</span>
+                                        <span style={{ color: '#9ca3af' }}>Số tiền</span>
                                         <span style={{ fontWeight: 'bold', color: '#26a69a' }}>10,000 VNĐ</span>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ color: '#9ca3af' }}>Content</span>
+                                        <span style={{ color: '#9ca3af' }}>Nội dung</span>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                             <span style={{ fontWeight: 'bold', color: '#f23645' }}>VIP {userId}</span>
                                             <button onClick={() => copyToClipboard(`VIP ${userId}`)} style={{ background: 'none', border: 'none', color: '#26a69a', cursor: 'pointer', padding: 0 }}>
@@ -190,7 +190,7 @@ export default function UpgradeModal({ onClose }) {
                                         backgroundColor: '#26a69a', color: 'white', border: 'none', fontWeight: 'bold'
                                     }}
                                 >
-                                    I have made the transfer
+                                    Tôi đã chuyển khoản
                                 </button>
                             </div>
                         )}
@@ -200,13 +200,13 @@ export default function UpgradeModal({ onClose }) {
                 {paymentStatus === 'waiting' && (
                     <div style={{ textAlign: 'center', padding: 20 }}>
                         <Loader className="spin" size={48} style={{ margin: '0 auto 16px', color: '#26a69a' }} />
-                        <h3 style={{ marginBottom: 8 }}>Checking payment...</h3>
+                        <h3 style={{ marginBottom: 8 }}>Đang kiểm tra thanh toán...</h3>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#9ca3af', marginBottom: 16 }}>
                             <Clock size={16} />
-                            <span>Time remaining: {formatTime(timeRemaining)}</span>
+                            <span>Thời gian còn lại: {formatTime(timeRemaining)}</span>
                         </div>
                         <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16 }}>
-                            Please wait while we confirm your payment. This may take a few moments.
+                            Vui lòng đợi trong khi chúng tôi xác nhận thanh toán. Quá trình này có thể mất vài phút.
                         </p>
                         <button
                             onClick={checkVipStatus}
@@ -215,7 +215,7 @@ export default function UpgradeModal({ onClose }) {
                                 padding: '6px 12px', borderRadius: 4, cursor: 'pointer', fontSize: 12
                             }}
                         >
-                            Check Status Now
+                            Kiểm tra ngay
                         </button>
                     </div>
                 )}
@@ -223,9 +223,9 @@ export default function UpgradeModal({ onClose }) {
                 {paymentStatus === 'success' && (
                     <div style={{ textAlign: 'center', padding: 20 }}>
                         <CheckCircle size={64} style={{ margin: '0 auto 16px', color: '#26a69a' }} />
-                        <h3 style={{ color: '#26a69a', marginBottom: 8 }}>Payment Successful!</h3>
+                        <h3 style={{ color: '#26a69a', marginBottom: 8 }}>Thanh toán thành công!</h3>
                         <p style={{ fontSize: 13, color: '#9ca3af' }}>
-                            Your account has been upgraded to VIP. Refreshing...
+                            Tài khoản của bạn đã được nâng cấp lên VIP. Đang tải lại...
                         </p>
                     </div>
                 )}
@@ -234,12 +234,12 @@ export default function UpgradeModal({ onClose }) {
                     <div style={{ textAlign: 'center', padding: 20 }}>
                         <XCircle size={64} style={{ margin: '0 auto 16px', color: '#f23645' }} />
                         <h3 style={{ color: '#f23645', marginBottom: 8 }}>
-                            {paymentStatus === 'expired' ? 'Payment Expired' : 'Payment Failed'}
+                            {paymentStatus === 'expired' ? 'Thanh toán hết hạn' : 'Thanh toán thất bại'}
                         </h3>
                         <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 16 }}>
                             {paymentStatus === 'expired'
-                                ? 'The payment window has expired. Please try again.'
-                                : 'Unable to process your payment. Please try again.'}
+                                ? 'Thời gian thanh toán đã hết. Vui lòng thử lại.'
+                                : 'Không thể xử lý thanh toán của bạn. Vui lòng thử lại.'}
                         </p>
                         <button
                             onClick={() => {
@@ -252,7 +252,7 @@ export default function UpgradeModal({ onClose }) {
                                 backgroundColor: '#26a69a', color: 'white', border: 'none', fontWeight: 'bold'
                             }}
                         >
-                            Try Again
+                            Thử lại
                         </button>
                     </div>
                 )}
