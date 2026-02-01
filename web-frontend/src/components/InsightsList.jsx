@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import useStore from '../store';
-import { TrendingUp, TrendingDown, Minus, RefreshCw, Zap, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, RefreshCw, Zap, AlertTriangle, Bell, BellOff } from 'lucide-react';
 
 export default function InsightsList() {
-    const { authFetch, currentSymbol } = useStore();
+    const { authFetch, currentSymbol, user } = useStore();
+    const [predNotifEnabled, setPredNotifEnabled] = useState(false);
     const [aggregatedPrediction, setAggregatedPrediction] = useState(null);
     const [recentInsights, setRecentInsights] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -15,6 +16,55 @@ export default function InsightsList() {
         const interval = setInterval(loadData, 30000);
         return () => clearInterval(interval);
     }, [currentSymbol]);
+
+    // Load notification settings from auth-service
+    useEffect(() => {
+        if (!user?.id) return;
+        const fetchSettings = async () => {
+            try {
+                const res = await authFetch('/auth/notifications/settings');
+                if (res.ok) {
+                    const settings = await res.json();
+                    // settings = {prediction_symbols: [...], investment_enabled: true/false}
+                    setPredNotifEnabled(settings.prediction_symbols?.includes(currentSymbol) || false);
+                }
+            } catch (e) {
+                console.warn('[NOTIF] Failed to load settings:', e);
+            }
+        };
+        fetchSettings();
+    }, [user?.id, currentSymbol]);
+
+    const handleToggleNotif = async () => {
+        if (!user?.id) {
+            alert('Vui lòng đăng nhập để sử dụng tính năng này.');
+            return;
+        }
+
+        const newState = !predNotifEnabled;
+        setPredNotifEnabled(newState);
+
+        try {
+            const res = await authFetch('/auth/notifications/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: 'PREDICTION',
+                    symbol: currentSymbol,
+                    enabled: newState
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error('Failed to update settings');
+            }
+
+            console.log(`[NOTIF] ${newState ? 'Enabled' : 'Disabled'} notifications for ${currentSymbol}`);
+        } catch (e) {
+            console.error('[NOTIF] Error:', e);
+            setPredNotifEnabled(!newState); // Revert on error
+            alert('Không thể cập nhật cài đặt. Vui lòng thử lại.');
+        }
+    };
 
     const loadData = async () => {
         setLoading(true);
@@ -232,8 +282,8 @@ export default function InsightsList() {
                             </div>
                             {causal.sentiment_impact && (
                                 <div className="sentiment-impact">
-                                    <span>Sentiment: {causal.sentiment_impact.news_sentiment?.toFixed(2)}</span>
-                                    <span>Volume: {causal.sentiment_impact.social_volume}</span>
+                                    <span>Chỉ số cảm xúc: {causal.sentiment_impact.news_sentiment?.toFixed(2)}</span>
+                                    <span>Khối lượng: {causal.sentiment_impact.social_volume}</span>
                                 </div>
                             )}
                         </div>
@@ -249,7 +299,7 @@ export default function InsightsList() {
                                 <div className="source-title">{source.title}</div>
                                 <div className="source-meta">
                                     <span>{source.source}</span>
-                                    <span className="impact-score">Impact: {source.impact_score}</span>
+                                    <span className="impact-score">Tác động: {source.impact_score}</span>
                                 </div>
                             </div>
                         ))}
@@ -292,9 +342,14 @@ export default function InsightsList() {
                         📋 Lịch sử
                     </button>
                 </div>
-                <button className="refresh-btn" onClick={loadData} disabled={loading}>
-                    <RefreshCw size={12} className={loading ? 'spinning' : ''} />
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                    <button className="refresh-btn" onClick={handleToggleNotif} title={`Nhận thông báo khi có dự đoán mới cho ${currentSymbol}`}>
+                        {predNotifEnabled ? <Bell size={12} color="#3b82f6" fill="#3b82f6" /> : <BellOff size={12} />}
+                    </button>
+                    <button className="refresh-btn" onClick={loadData} disabled={loading}>
+                        <RefreshCw size={12} className={loading ? 'spinning' : ''} />
+                    </button>
+                </div>
             </div>
 
             {/* Content */}

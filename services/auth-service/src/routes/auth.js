@@ -6,6 +6,7 @@ const TokenBlacklist = require('../services/TokenBlacklist');
 const RefreshToken = require('../services/RefreshToken');
 const AuditLogger = require('../utils/AuditLogger');
 const authMiddleware = require('../middleware/auth');
+const { publishUserSettingsUpdate } = require('../utils/kafkaProducer');
 
 const router = express.Router();
 router.use(express.json());
@@ -364,6 +365,90 @@ router.get('/events/sse', (req, res) => {
   } catch (e) {
     console.error('SSE Auth failed:', e);
     res.status(401).end();
+  }
+});
+// Get notification settings
+router.get('/notifications/settings', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.sub;
+    const r = await pool.query(
+      'SELECT notification_settings FROM users WHERE id = $1 LIMIT 1',
+      [userId]
+    );
+
+    if (r.rows.length === 0) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    const settings = r.rows[0].notification_settings || {
+      prediction_symbols: [],
+      investment_enabled: false
+    };
+
+    res.json(settings);
+  } catch (err) {
+    console.error('[NOTIF SETTINGS GET]', err);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Update notification settings
+router.post('/notifications/settings', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.sub;
+    const { type, symbol, enabled } = req.body;
+
+    if (!type) {
+      return res.status(400).json({ error: 'type required (PREDICTION or INVESTMENT)' });
+    }
+
+    // Get current settings and email
+    const r = await pool.query(
+      'SELECT email, notification_settings FROM users WHERE id = $1 LIMIT 1',
+      [userId]
+    );
+
+    if (r.rows.length === 0) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    const userEmail = r.rows[0].email;
+    let settings = r.rows[0].notification_settings || {
+      prediction_symbols: [],
+      investment_enabled: false
+    };
+
+    if (type === 'PREDICTION') {
+      if (!symbol) {
+        return res.status(400).json({ error: 'symbol required for PREDICTION type' });
+      }
+
+      if (enabled) {
+        // Add symbol if not exists
+        if (!settings.prediction_symbols.includes(symbol)) {
+          settings.prediction_symbols.push(symbol);
+        }
+      } else {
+        // Remove symbol
+        settings.prediction_symbols = settings.prediction_symbols.filter(s => s !== symbol);
+      }
+    } else if (type === 'INVESTMENT') {
+      settings.investment_enabled = !!enabled;
+    }
+
+    // Update DB
+    await pool.query(
+      'UPDATE users SET notification_settings = $1 WHERE id = $2',
+      [JSON.stringify(settings), userId]
+    );
+
+    // Publish to Kafka for notification-service to sync
+    await publishUserSettingsUpdate(userId, userEmail, settings);
+
+    res.json({ success: true, settings });
+  } catch (err) {
+    console.error('[NOTIF SETTINGS POST]', err);
+    res.status(500).json({ error: 'db_error' });
   }
 });
 

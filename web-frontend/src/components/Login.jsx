@@ -122,13 +122,33 @@ export default function Login() {
   const [mode, setMode] = useState('login'); // 'login' or 'register'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const validatePassword = (pwd) => {
+    // Tối thiểu 8 ký tự, 1 hoa, 1 thường, 1 số, 1 ký tự đặc biệt
+    const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+    return regex.test(pwd);
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setError(null);
+
+    // Validation
+    if (mode === 'register') {
+      if (!validatePassword(password)) {
+        setError('Mật khẩu phải có ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số và ký tự đặc biệt.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Mật khẩu xác nhận không khớp.');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       if (mode === 'login') {
@@ -137,7 +157,11 @@ export default function Login() {
         await register(email.trim().toLowerCase(), password);
       }
     } catch (err) {
-      setError(err.message || 'Action failed');
+      // Dịch một số lỗi phổ biến từ backend nếu cần
+      const errMsg = err.message || 'Thao tác thất bại';
+      if (errMsg.includes('User already exists')) setError('Email này đã được đăng ký.');
+      else if (errMsg.includes('Invalid credentials')) setError('Email hoặc mật khẩu không đúng.');
+      else setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -155,7 +179,7 @@ export default function Login() {
         </div>
 
         <h2 style={styles.title}>
-          {mode === 'login' ? 'Sign in to your account' : 'Create an account'}
+          {mode === 'login' ? 'Đăng nhập vào tài khoản' : 'Tạo tài khoản mới'}
         </h2>
 
         <form onSubmit={submit} style={styles.form}>
@@ -167,11 +191,11 @@ export default function Login() {
               className='login-input'
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder='user@example.com'
+              placeholder='email@example.com'
             />
           </div>
           <div style={styles.formGroup}>
-            <label className='login-label'>Password</label>
+            <label className='login-label'>Mật khẩu</label>
             <input
               type='password'
               required
@@ -183,9 +207,23 @@ export default function Login() {
           </div>
 
           {mode === 'register' && (
+            <div style={styles.formGroup}>
+              <label className='login-label'>Xác nhận mật khẩu</label>
+              <input
+                type='password'
+                required
+                className='login-input'
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder='••••••••'
+              />
+            </div>
+          )}
+
+          {mode === 'register' && (
             <div style={styles.hint}>
               <span style={styles.hintText}>
-                Standard account (Upgrade available inside)
+                Tài khoản tiêu chuẩn (Có thể nâng cấp bên trong)
               </span>
             </div>
           )}
@@ -199,18 +237,18 @@ export default function Login() {
             style={styles.buttonInner}
           >
             {loading
-              ? 'Processing...'
+              ? 'Đang xử lý...'
               : mode === 'login'
-                ? 'Sign in'
-                : 'Create Account'}
+                ? 'Đăng Nhập'
+                : 'Đăng Ký'}
             {!loading && <ArrowRight size={16} />}
           </button>
         </form>
 
         <div style={styles.footer}>
           {mode === 'login'
-            ? "Don't have an account? "
-            : 'Already have an account? '}
+            ? "Chưa có tài khoản? "
+            : 'Đã có tài khoản? '}
           <button
             onClick={() => {
               setMode(mode === 'login' ? 'register' : 'login');
@@ -226,7 +264,7 @@ export default function Login() {
               e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
-            {mode === 'login' ? 'Sign up' : 'Sign in'}
+            {mode === 'login' ? 'Đăng ký ngay' : 'Đăng nhập ngay'}
           </button>
         </div>
       </div>

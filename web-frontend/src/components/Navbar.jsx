@@ -36,15 +36,15 @@ export default function Navbar({ currentPage, onNavigate }) {
                         onClick={() => onNavigate('trading')}
                     >
                         <BarChart3 size={16} />
-                        <span>Trading</span>
+                        <span>Giao Dịch</span>
                     </button>
                     <button
                         className={`nav-tab ${currentPage === 'investment' ? 'active' : ''} ${!isVip ? 'vip-required' : ''}`}
                         onClick={() => onNavigate('investment')}
-                        title={!isVip ? 'VIP Feature' : 'Investment Simulator'}
+                        title={!isVip ? 'Tính năng VIP' : 'Mô phỏng đầu tư'}
                     >
                         <TrendingUp size={16} />
-                        <span>Investment</span>
+                        <span>Đầu Tư</span>
                         {!isVip && <span className="vip-badge-mini">VIP</span>}
                     </button>
                 </div>
@@ -70,7 +70,7 @@ export default function Navbar({ currentPage, onNavigate }) {
                     </div>
                 </div>
 
-                <button className="logout-btn" onClick={logout} title="Logout">
+                <button className="logout-btn" onClick={logout} title="Đăng xuất">
                     <LogOut size={18} />
                 </button>
             </div>

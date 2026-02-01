@@ -21,21 +21,21 @@ export default function Sidebar() {
                 <button
                     onClick={() => setActiveTab('watchlist')}
                     className={`tab-btn ${activeTab === 'watchlist' ? 'active' : ''}`}
-                    title="Watchlist"
+                    title="Danh sách theo dõi"
                 >
                     <List size={16} />
                 </button>
                 <button
                     onClick={() => setActiveTab('news')}
                     className={`tab-btn ${activeTab === 'news' ? 'active' : ''}`}
-                    title="News"
+                    title="Tin tức"
                 >
                     <Newspaper size={16} />
                 </button>
                 <button
                     onClick={() => setActiveTab('insights')}
                     className={`tab-btn vip ${activeTab === 'insights' ? 'active' : ''}`}
-                    title="AI Insights"
+                    title="Phân tích AI"
                 >
                     <BrainCircuit size={16} />
                 </button>
@@ -49,9 +49,9 @@ export default function Sidebar() {
                     isVip ? <InsightsList /> : (
                         <div className="vip-lock">
                             <Lock className="vip-icon" />
-                            <h3>VIP Access Required</h3>
-                            <p style={{ fontSize: '13px', marginTop: 8 }}>Upgrade your account to see real-time AI causal analysis and price predictions.</p>
-                            <button className="upgrade-btn" onClick={triggerUpgrade}>Upgrade Now</button>
+                            <h3>Yêu cầu VIP</h3>
+                            <p style={{ fontSize: '13px', marginTop: 8 }}>Nâng cấp tài khoản để xem phân tích AI nhân quả và dự báo giá thời gian thực.</p>
+                            <button className="upgrade-btn" onClick={triggerUpgrade}>Nâng cấp ngay</button>
                         </div>
                     )
                 )}
