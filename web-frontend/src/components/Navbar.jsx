@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import useStore from '../store';
 import SymbolSelector from './SymbolSelector';
 import { useToast } from './ToastProvider';
-import { User, Activity, LogOut, CheckCircle, BarChart3, TrendingUp, Sparkles } from 'lucide-react';
+import { useTheme } from './ThemeProvider';
+import { User, Activity, LogOut, CheckCircle, BarChart3, TrendingUp, Sparkles, Sun, Moon } from 'lucide-react';
 
 export default function Navbar({ currentPage, onNavigate }) {
     const { logout, isVip, price } = useStore();
     const { showToast } = useToast();
+    const { isDark, toggleTheme } = useTheme();
 
     // Listen for VIP upgrade event
     useEffect(() => {
@@ -20,6 +22,8 @@ export default function Navbar({ currentPage, onNavigate }) {
         window.addEventListener('vip_upgraded', handleUpgrade);
         return () => window.removeEventListener('vip_upgraded', handleUpgrade);
     }, [showToast]);
+
+
 
     return (
         <div className="navbar">
@@ -70,6 +74,29 @@ export default function Navbar({ currentPage, onNavigate }) {
                     </div>
                 </div>
 
+                {/* Theme Toggle Button */}
+                <button
+                    className="theme-toggle-btn"
+                    onClick={toggleTheme}
+                    title={isDark ? 'Chuyển sang chế độ sáng' : 'Chuyển sang chế độ tối'}
+                    style={{
+                        background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--text-primary)',
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    {isDark ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+
+
+
                 <button className="logout-btn" onClick={logout} title="Đăng xuất">
                     <LogOut size={18} />
                 </button>
@@ -77,3 +104,4 @@ export default function Navbar({ currentPage, onNavigate }) {
         </div>
     );
 }
+

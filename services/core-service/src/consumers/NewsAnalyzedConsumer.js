@@ -38,7 +38,6 @@ const flushBufferToDB = async () => {
     `;
 
     await client.query(queryText, values);
-    console.log(`Saved ${currentBatch.length} news_sentiment rows to DB`);
   } catch (err) {
     console.error('Error inserting news_sentiment batch:', err);
     // requeue

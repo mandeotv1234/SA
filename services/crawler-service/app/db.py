@@ -25,6 +25,10 @@ def init_db():
         # index for active check
         db.crawl_sources.create_index([("is_active", ASCENDING)])
         
+        # Collection: news_articles
+        db.news_articles.create_index([("url", ASCENDING)], unique=True)
+        db.news_articles.create_index([("created_at", ASCENDING)])
+        
         # Collection: extraction_rules
         db.extraction_rules.create_index([("domain", ASCENDING)], unique=True)
         
@@ -111,3 +115,20 @@ def save_extraction_rule(domain, selectors):
         }},
         upsert=True
     )
+
+def save_article(payload: dict):
+    """Save article to MongoDB, avoiding duplicates."""
+    db = get_db()
+    # Add timestamps for DB record
+    record = payload.copy()
+    record['created_at'] = datetime.utcnow()
+    # Ensure URL is the key
+    try:
+        db.news_articles.update_one(
+            {"url": record['url']},
+            {"$set": record},
+            upsert=True
+        )
+        LOG.debug(f"Saved article to DB: {record.get('title')}")
+    except Exception as e:
+        LOG.error(f"Failed to save article to DB: {e}")

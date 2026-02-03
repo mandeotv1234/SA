@@ -8,5 +8,6 @@ pandas
 numpy
 python-dotenv
 confluent-kafka
+ta
 apscheduler
 google-generativeai

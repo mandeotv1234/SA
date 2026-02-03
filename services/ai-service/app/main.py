@@ -110,3 +110,41 @@ def api_analyze_investment(payload: dict):
     """
     from app.modules.investment_advisor import analyze_investment
     return analyze_investment(payload)
+
+
+@app.post('/admin/train-model')
+def trigger_model_training():
+    """
+    Manually trigger model training (admin only).
+    This will collect data from Kafka and train the model in background.
+    """
+    try:
+        from background_trainer import get_background_trainer
+        trainer = get_background_trainer()
+        
+        if trainer.is_training:
+            return {"status": "error", "message": "Training already in progress"}
+        
+        trainer.run_once()
+        return {
+            "status": "ok", 
+            "message": "Model training started in background",
+            "last_training": trainer.last_training_time
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get('/admin/training-status')
+def get_training_status():
+    """Get current training status."""
+    try:
+        from background_trainer import get_background_trainer
+        trainer = get_background_trainer()
+        return {
+            "is_training": trainer.is_training,
+            "last_training_time": trainer.last_training_time,
+            "training_interval_hours": trainer.training_interval / 3600
+        }
+    except Exception as e:
+        return {"error": str(e)}
