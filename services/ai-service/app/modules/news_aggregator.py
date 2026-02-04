@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from collections import deque
 
 from app.kafka_producer import produce_ai_insight
-from app.modules.ollama_client import OllamaClient
+from app.modules.gemini_client import GeminiClient
 
 
 from app.modules.inference import InferenceEngine
@@ -218,12 +218,9 @@ def run_scheduled_prediction() -> Dict:
     global _last_result
     _last_result = result_payload
 
-    # Also publish aggregated result for market overview
-    try:
-        produce_ai_insight(result_payload)
-        print(f"[KAFKA] Published aggregated_prediction (all {len(predictions)} symbols)")
-    except Exception as e:
-        print(f"[KAFKA ERROR] {e}")
+    # Note: Each prediction is already published individually above (line 178)
+    # No need to publish aggregated result again
+    
     
     return result_payload
 

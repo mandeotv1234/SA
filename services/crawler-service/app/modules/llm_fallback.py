@@ -92,7 +92,7 @@ def _extract_content(html: str) -> str:
     """Extract main content using trafilatura."""
     content = trafilatura.extract(html)
     if content:
-        return content[:5000]  # Limit length
+        return content
     return ""
 
 
@@ -148,9 +148,9 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
             content = "\n\n".join(paragraphs[:10])[:5000]
         
         # --- LLM FALLBACK START ---
-        if (not content or len(content) < 200) and os.getenv("OLLAMA_API_URL"):
-            LOG.info(f"Heuristics failed for {url}. Attempting LLM extraction via Ollama...")
-            llm_result = extract_with_llm(html, url)
+        if (not content or len(content) < 200) and os.getenv("GEMINI_API_KEY"):
+            LOG.info(f"Heuristics failed for {url}. Attempting LLM extraction via Gemini...")
+            llm_result = extract_with_gemini(html, url)
             if llm_result:
                 return llm_result
         # --- LLM FALLBACK END ---
@@ -190,83 +190,29 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
             "url": url
         }
 
-def extract_with_llm(html: str, url: str) -> Dict | None:
+
+def extract_with_gemini(html: str, url: str) -> Dict | None:
     """
-    Use Ollama to parse difficult HTML structure.
+    Use Gemini to parse difficult HTML structure.
     """
     try:
-        ollama_url = os.getenv("OLLAMA_API_URL")
-        if not ollama_url:
-            return None
-
-        # Clean up URL ensuring no trailing slash for clean concatenation if needed, 
-        # though usually full URL is provided.
-        api_endpoint = f"{ollama_url}/api/generate"
+        from .gemini_client import GeminiClient
         
         # Strip script/style to save tokens
         soup = BeautifulSoup(html, "html.parser")
         for script in soup(["script", "style", "svg", "noscript"]):
             script.extract()
-        clean_html = soup.get_text(separator=' ', strip=True)[:10000] # Limit input
+        clean_html = soup.get_text(separator=' ', strip=True)[:8000]  # Limit input
         
-        prompt = f"""
-        Extract article details from this HTML text.
-        URL: {url}
-        HTML Text:
-        {clean_html}
+        # Use Gemini client
+        client = GeminiClient()
+        result = client.extract_article(clean_html, url)
         
-        Return STRICT JSON format only:
-        {{
-            "title": "Article Title",
-            "date": "ISO8601 or null",
-            "content": "Full parsed article content...",
-            "symbols": ["BTCUSDT", ...],
-            "sentiment": "Positive/Negative/Neutral",
-            "category": "Crypto/Finance/General"
-        }}
-        """
+        if result:
+            LOG.info(f"[GEMINI] Successfully extracted: {result.get('title', '')[:50]}...")
         
-        payload = {
-            "model": "llama3.2:3b",  # Use a standard small model, or make configurable
-            "prompt": prompt,
-            "stream": False,
-            "format": "json"
-        }
-        
-        # Allow model override
-        if os.getenv("OLLAMA_MODEL"):
-             payload["model"] = os.getenv("OLLAMA_MODEL")
-             
-        try:
-             # Try first with explicit model
-             response = requests.post(api_endpoint, json=payload, timeout=60)
-             response.raise_for_status()
-        except Exception:
-             # Fallback to 'tinyllama' or let it fail if not found, 
-             # but usually users have 'llama3' or 'mistral'
-             # Let's try to just log and return None if specific model fails
-             # or maybe user has a different default.
-             # For now, we assume the env/default works.
-             raise
-
-        res_json = response.json()
-        raw_text = res_json.get("response", "")
-        
-        # Parse content
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            # Try to find JSON in text if 'format: json' didn't work perfectly
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-            else:
-                return None
-
-        data['relevance_score'] = 0.9 
-        data['url'] = url
-        return data
+        return result
         
     except Exception as e:
-        LOG.error(f"Ollama Extraction failed: {e}")
+        LOG.error(f"Gemini Extraction failed: {e}")
         return None

@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
 import { useToast } from './ToastProvider';
+import { useRefreshVIPStatus } from '../hooks/useRefreshVIPStatus';
 import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity, Lock, ChevronDown, Bell, BellOff } from 'lucide-react';
 
 export default function InvestmentSimulator() {
     const { authFetch, user, symbol, token, isVip } = useStore();
     const { showToast } = useToast();
+
+    // Refresh VIP status on mount (in case user just upgraded)
+    useRefreshVIPStatus();
+
     const [investments, setInvestments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);

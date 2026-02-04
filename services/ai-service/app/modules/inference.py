@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime
 from app.modules.data_processor import DataProcessor
 from app.modules.model import AdvancedDualStreamNetwork
-from app.modules.ollama_client import OllamaClient
+from app.modules.gemini_client import GeminiClient
 from app.market_cache import get_candles
 
 # Configure logging
@@ -29,7 +29,7 @@ class InferenceEngine:
             dropout=0.3
         ).to(device)
         
-        self.ollama_client = OllamaClient()
+        self.gemini_client = GeminiClient()
         
         if model_path:
             self.load_model(model_path)
@@ -653,11 +653,18 @@ class InferenceEngine:
         # Add current_price to tech_indicators for recommendation
         tech_indicators['close'] = current_price
 
-        # Generate LLM-based causal analysis (legacy - keeping for backward compatibility)
-        if driver_type == "NEWS" and top_news_item:
-             causal_analysis = self.generate_news_explanation(symbol, direction_1h, top_news_item, tech_indicators, dl_stats, top_sources)
-        else:
-             causal_analysis = self.generate_technical_explanation(symbol, direction_1h, dl_stats, float(top_prob), tech_indicators, top_sources)
+
+        # Generate unified causal explanation (includes both news and technical analysis)
+        causal_analysis = self.generate_unified_explanation(
+            symbol=symbol,
+            direction=direction_1h,
+            dl_stats=dl_stats,
+            tech_indicators=tech_indicators,
+            top_news_item=top_news_item,
+            all_news=top_sources,
+            driver_type=driver_type,
+            attention_score=float(top_prob)
+        )
 
         # NEW: Advanced news impact analysis (FinBERT + LLM)
         news_impact_result = self.analyze_news_impact_for_coin(
@@ -700,18 +707,14 @@ class InferenceEngine:
             },
             # NEW: News impact analysis with semantic similarity + LLM
             "news_impact_analysis": news_impact_result,
-            # NEW: Comprehensive explanation (single paragraph)
-            "explanation": self.generate_comprehensive_explanation(
-                symbol=symbol,
-                direction=direction_1h,
-                predicted_change=move_percent_1h * 100,
-                confidence=confidence_1h,
-                current_price=current_price,
-                candles_df=candles_df,
-                tech_indicators=tech_indicators,
-                news_impact_data=news_impact_result,
-                top_news_item=top_news_item
-            ),
+            # Gemini-generated explanation (Vietnamese)
+            "explanation": causal_analysis.get('explanation_vi', 'Đang phân tích...') if causal_analysis else 'Đang phân tích...',
+            # Full causal analysis from Gemini
+            "causal_analysis": causal_analysis if causal_analysis else {
+                "primary_driver": driver_type,
+                "key_event": "Phân tích đang được xử lý",
+                "explanation_vi": "Đang phân tích dữ liệu thị trường..."
+            },
             "sources": top_sources,
             "debug_metadata": {
                 "driver": driver_type,
@@ -721,6 +724,124 @@ class InferenceEngine:
             }
         }
 
+
+    def generate_unified_explanation(self, symbol, direction, dl_stats, tech_indicators, 
+                                     top_news_item, all_news, driver_type, attention_score):
+        """
+        Unified causal explanation combining news and technical analysis.
+        Single API call to Gemini with all relevant data.
+        """
+        # Extract technical indicators
+        rsi = tech_indicators.get('rsi', 50)
+        macd = tech_indicators.get('macd', 0)
+        bb_high = tech_indicators.get('bb_high', 0)
+        bb_low = tech_indicators.get('bb_low', 0)
+        current_price = tech_indicators.get('close', 0)
+        
+        # Extract news data - ALWAYS include top news for context (not just when driver=NEWS)
+        news_section = ""
+        sentiment_score = 0
+        
+        if all_news and len(all_news) > 0:
+            # Get top 3 news by attention score
+            top_3_news = sorted(all_news, key=lambda x: x.get('attention_score', 0), reverse=True)[:3]
+            
+            news_items = []
+            for i, news in enumerate(top_3_news, 1):
+                title = news.get('title', 'N/A')
+                content = news.get('content', '')
+                source = news.get('source', 'Unknown')
+                sentiment = news.get('sentiment_score', 0)
+                attn = news.get('attention_score', 0)
+                
+                news_items.append(f"""
+   {i}. "{title}"
+      • Nguồn: {source}
+      • Nội dung: {content}...
+      • Sentiment: {sentiment:+.2f} | Attention: {attn:.3f}""")
+            
+            # Use top news sentiment
+            sentiment_score = top_3_news[0].get('sentiment_score', 0)
+            
+            news_section = f"""
+📰 TIN TỨC THỊ TRƯỜNG (Top 3 theo Attention Score):
+{''.join(news_items)}
+
+💡 LƯU Ý: {'Primary driver là TIN TỨC - Phân tích tác động chi tiết của các tin này' if driver_type == 'NEWS' else 'Primary driver là TECHNICAL - Nhưng hãy đánh giá xem tin tức có ảnh hưởng phụ không'}
+"""
+        else:
+            news_section = """
+📰 TIN TỨC: Không có tin tức đáng kể trong 5 giờ qua. Biến động giá chủ yếu do technical factors.
+"""
+        
+        # Build unified prompt
+        prompt = f"""
+🎯 ROLE: Bạn là Senior Crypto Market Analyst với chuyên môn về cả Technical Analysis và News Impact.
+
+📊 NHIỆM VỤ: Phân tích và giải thích dự báo giá cho {symbol}.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📈 KẾT QUẢ DỰ BÁO TỪ DEEP LEARNING MODEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔮 DỰ BÁO 1 GIỜ TỚI:
+   • Xu hướng: {direction}
+   • Mục tiêu giá: {dl_stats['predicted_return']:+.2f}%
+   • Xác suất: {dl_stats['probability']:.3f}
+   • Độ tin cậy: {dl_stats['confidence']:.1f}%
+   • Volatility: {dl_stats['volatility']}
+
+📊 CHỈ SỐ KỸ THUẬT HIỆN TẠI:
+   • Giá hiện tại: ${current_price:,.2f}
+   • RSI(14): {rsi:.2f} → {"Quá mua" if rsi > 70 else "Quá bán" if rsi < 30 else "Trung lập"}
+   • MACD: {macd:.4f} → {"Tích cực" if macd > 0 else "Tiêu cực"}
+   • Bollinger Bands: [{bb_low:.2f} - {bb_high:.2f}]
+
+{news_section}
+
+🎯 PRIMARY DRIVER: {driver_type}
+   → Model đã phân tích và xác định yếu tố chính ảnh hưởng đến giá là: {"Tin tức" if driver_type == "NEWS" else "Technical patterns"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 YÊU CẦU ĐẦU RA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Trả về JSON thuần (KHÔNG có markdown):
+{{
+    "primary_driver": "{driver_type}_CATALYST",
+    "key_event": "Tóm tắt ngắn gọn sự kiện/pattern chính",
+    "news_citations": ["Trích dẫn nguyên văn câu quan trọng từ tin tức (nếu có)"],
+    "explanation_vi": "Giải thích chi tiết 6-8 câu bằng tiếng Việt. Câu 1: Dự báo {direction} {dl_stats['predicted_return']:+.2f}% dựa trên [primary driver]. Câu 2-3: NẾU CÓ TIN TỨC (kể cả khi driver=TECHNICAL) - Phân tích tác động của top 3 tin: Tin nào hỗ trợ/đối lập với dự báo? Trích dẫn câu quan trọng. Tin có sentiment như thế nào? Câu 4-5: Phân tích technical indicators (RSI={rsi:.1f}, MACD={macd:.4f}, BB) và ý nghĩa. Câu 6: Giải thích cơ chế nhân quả (Driver → Tâm lý → Order flow → Giá). Câu 7: Độ tin cậy {dl_stats['confidence']:.1f}% và lý do. Câu 8: Rủi ro cụ thể và điều kiện thị trường.",
+    "causal_chain": {{
+        "cause": "Nguyên nhân chính (tin tức hoặc technical pattern)",
+        "mechanism": "Cơ chế tác động (FOMO/Liquidation/Breakout/Support)",
+        "effect": "Kết quả dự kiến: Giá {direction.lower()} {dl_stats['predicted_return']:+.2f}%"
+    }},
+    "sentiment_impact": {{
+        "news_sentiment": {sentiment_score if top_news_item else 0.0},
+        "social_volume": "{"HIGH" if driver_type == "NEWS" else "LOW"}"
+    }},
+    "actionable_advice": "Lời khuyên giao dịch cụ thể. VD: Entry: $X-$Y. Stop-loss: $Z. Take-profit: $A (R/R ratio). Lưu ý điều kiện thị trường."
+}}
+
+⚠️ QUAN TRỌNG - BẮT BUỘC:
+1. **Phân tích tin tức (NẾU CÓ):**
+   - Dù PRIMARY DRIVER là gì, NẾU có tin tức thì PHẢI phân tích tác động
+   - Trích dẫn NGUYÊN VĂN ít nhất 1 câu từ tin vào news_citations
+   - Đánh giá: Tin hỗ trợ hay đối lập với dự báo? Sentiment như thế nào?
+   
+2. **Phân tích technical (LUÔN LUÔN):**
+   - Giải thích Ý NGHĨA của các chỉ số, không chỉ liệt kê
+   - Cơ chế nhân quả: Driver → Tâm lý → Order flow → Giá
+   
+3. **Bắt buộc có số liệu cụ thể:**
+   - RSI={rsi:.1f}, MACD={macd:.4f}, Prediction={dl_stats['predicted_return']:+.2f}%
+   - Actionable advice phải có giá Entry, SL, TP cụ thể
+"""
+        
+        return self._call_gemini(prompt)
+
+    # Legacy methods - kept for reference but not used
     def generate_news_explanation(self, symbol, direction, top_news_item, tech_inds, dl_stats, other_news):
         """
         Expert-level causal analysis when NEWS is the primary driver.
@@ -887,13 +1008,7 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
         "Trích dẫn nguyên văn câu quan trọng #1 từ bài báo",
         "Trích dẫn nguyên văn câu quan trọng #2 từ bài báo"
     ],
-    "explanation_vi": "Đoạn văn 6-8 câu, CÓ DẪN CHỨNG CỤ THỂ TỪ BÀI BÁO:
-    Câu 1: 'Dự báo {direction} {dl_stats['predicted_return']:+.2f}% được thúc đẩy bởi [sự kiện cụ thể từ tin] (Sentiment {sentiment_score:+.2f}).'
-    Câu 2: TRÍCH DẪN nguyên văn từ bài báo: \"[câu quan trọng từ nội dung tin]\"
-    Câu 3-4: Giải thích cơ chế nhân quả (Tin → Tâm lý thị trường → Order flow → Giá). Có số liệu RSI={rsi:.1f}, MACD.
-    Câu 5: Phân tích xung đột/đồng thuận News vs Technical.
-    Câu 6: Dẫn chứng lịch sử tương tự (VD: 'Lần trước khi [sự kiện tương tự] xảy ra, giá tăng X% trong Y giờ').
-    Câu 7-8: Kết luận độ tin cậy và rủi ro cụ thể.",
+    "explanation_vi": "Đoạn văn 6-8 câu, CÓ DẪN CHỨNG CỤ THỂ TỪ BÀI BÁO. Câu 1: Dự báo {direction} {dl_stats['predicted_return']:+.2f}% được thúc đẩy bởi sự kiện cụ thể từ tin (Sentiment {sentiment_score:+.2f}). Câu 2: TRÍCH DẪN nguyên văn từ bài báo. Câu 3-4: Giải thích cơ chế nhân quả (Tin → Tâm lý thị trường → Order flow → Giá). Có số liệu RSI={rsi:.1f}, MACD. Câu 5: Phân tích xung đột/đồng thuận News vs Technical. Câu 6: Dẫn chứng lịch sử tương tự. Câu 7-8: Kết luận độ tin cậy và rủi ro cụ thể.",
     "causal_chain": {{
         "cause": "Sự kiện/Tin tức cụ thể",
         "mechanism": "FOMO/Liquidation/Whale/Panic",
@@ -903,7 +1018,7 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
         "news_sentiment": {sentiment_score},
         "social_volume": "HIGH/MEDIUM/LOW"
     }},
-    "actionable_advice": "Lời khuyên CỤ THỂ với giá Entry, Stop-loss, Take-profit. VD: 'Entry $68,500-$69,000. SL dưới $67,800 (-2%). TP1: $71,500 (+4%), TP2: $73,000 (+6%). R/R 1:3. Cảnh giác false breakout nếu volume < SMA.'"
+    "actionable_advice": "Lời khuyên CỤ THỂ với giá Entry, Stop-loss, Take-profit. VD: Entry $68,500-$69,000. SL dưới $67,800 (-2%). TP1: $71,500 (+4%), TP2: $73,000 (+6%). R/R 1:3. Cảnh giác false breakout nếu volume < SMA."
 }}
 
 ⚠️ LƯU Ý QUAN TRỌNG:
@@ -913,7 +1028,7 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
 - Giải thích TẠI SAO tin này gây ra biến động giá, không chỉ MÔ TẢ.
 """
         
-        return self._call_ollama(prompt)
+        return self._call_gemini(prompt)
 
     def generate_technical_explanation(self, symbol, direction, dl_stats, attn_score, tech_inds, other_news):
         """
@@ -1027,13 +1142,13 @@ LAYER 3 - STRATEGIC POSITIONING:
 Trả về JSON thuần (KHÔNG có markdown ```json):
 {{
     "primary_driver": "TECHNICAL_MOMENTUM",
-    "key_event": "Technical Market Structure Update (VD: 'RSI Oversold Bounce' hoặc 'MACD Bullish Cross')",
-    "explanation_vi": "Đoạn văn phân tích 4-5 câu, CHUYÊN SÂU VỀ KỸ THUẬT. Bắt đầu: 'Dự báo {direction} {dl_stats['predicted_return']:+.2f}% dựa trên phân tích kỹ thuật cho thấy...' Phải đề cập: (1) RSI và ý nghĩa, (2) MACD signal, (3) Volume confirmation, (4) Kết luận về supply/demand dynamics. Sử dụng thuật ngữ: Support/Resistance, Breakout, Liquidity grab, Order block, Fair Value Gap...",
+    "key_event": "Technical Market Structure Update (VD: RSI Oversold Bounce hoặc MACD Bullish Cross)",
+    "explanation_vi": "Đoạn văn phân tích 4-5 câu, CHUYÊN SÂU VỀ KỸ THUẬT. Bắt đầu: Dự báo {direction} {dl_stats['predicted_return']:+.2f}% dựa trên phân tích kỹ thuật cho thấy... Phải đề cập: (1) RSI và ý nghĩa, (2) MACD signal, (3) Volume confirmation, (4) Kết luận về supply/demand dynamics. Sử dụng thuật ngữ: Support/Resistance, Breakout, Liquidity grab, Order block, Fair Value Gap.",
     "sentiment_impact": {{
         "news_sentiment": 0.0,
         "social_volume": "LOW"
     }},
-    "actionable_advice": "Lời khuyên giao dịch cụ thể (2-3 câu). VD: 'Entry: Mua khi RSI bounce từ vùng 30-35. Stop-loss: Dưới swing low tại X. Take-profit: Resistance R1 tại Y (Risk/Reward 1:2.5).'"
+    "actionable_advice": "Lời khuyên giao dịch cụ thể (2-3 câu). VD: Entry: Mua khi RSI bounce từ vùng 30-35. Stop-loss: Dưới swing low tại X. Take-profit: Resistance R1 tại Y (Risk/Reward 1:2.5)."
 }}
 
 ⚠️ LƯU Ý QUAN TRỌNG:
@@ -1043,45 +1158,74 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
 - Nếu có xung đột giữa các chỉ số (VD: RSI tăng nhưng MACD giảm), phải giải thích yếu tố nào quan trọng hơn.
 """
         
-        return self._call_ollama(prompt)
+        return self._call_gemini(prompt)
 
-    def _call_ollama(self, prompt, max_retries=2):
+    def _call_gemini(self, prompt, max_retries=2):
         """
-        Call Ollama API with retry logic and smart fallback.
+        Call Gemini API with retry logic and smart fallback.
         """
         import json
         import re
         
         for attempt in range(max_retries):
             try:
-                api_result = self.ollama_client.generate(prompt)
+                api_result = self.gemini_client.generate(prompt, temperature=0.7, max_tokens=4096)
                 if api_result:
-                    response = self.ollama_client.extract_response(api_result)
+                    response = self.gemini_client.extract_response(api_result)
                     if response:
-                        # Clean up common JSON issues
-                        clean_json = response
+                        logger.info(f"[GEMINI] Response length: {len(response)} chars")
+                        
+                        # Clean up response
+                        clean_json = response.strip()
+                        
+                        # Remove markdown code blocks
                         clean_json = re.sub(r'```json\s*', '', clean_json)
                         clean_json = re.sub(r'```\s*', '', clean_json)
-                        clean_json = clean_json.strip()
                         
-                        # Try to extract JSON object even if wrapped in text
+                        # Remove any leading/trailing text before/after JSON
                         json_match = re.search(r'\{[\s\S]*\}', clean_json)
                         if json_match:
                             clean_json = json_match.group(0)
+                        
+                        # Fix common JSON issues
+                        # 1. Replace smart quotes with regular quotes
+                        clean_json = clean_json.replace('"', '"').replace('"', '"')
+                        clean_json = clean_json.replace(''', "'").replace(''', "'")
+                        
+                        # 2. Fix newlines in strings (escape them)
+                        # This is tricky - we need to be careful not to break valid JSON
                         
                         try:
                             parsed = json.loads(clean_json)
                             # Validate required fields
                             if parsed.get('primary_driver') and parsed.get('explanation_vi'):
+                                logger.info(f"[GEMINI] ✓ Successfully parsed JSON with {len(str(parsed))} chars")
                                 return parsed
+                            else:
+                                logger.warning(f"[GEMINI] Missing required fields: primary_driver or explanation_vi")
                         except json.JSONDecodeError as e:
-                            logger.warning(f"JSON parse attempt {attempt+1} failed: {e}")
+                            logger.warning(f"[GEMINI] JSON parse attempt {attempt+1} failed: {e}")
+                            logger.warning(f"[GEMINI] Response preview: {clean_json[:500]}")
+                            
+                            # Try to fix and retry once more
+                            if attempt == 0:
+                                # Try to fix unterminated strings by escaping newlines
+                                try:
+                                    # Find all string values and escape newlines
+                                    fixed_json = re.sub(r':\s*"([^"]*)"', lambda m: f': "{m.group(1).replace(chr(10), " ")}"', clean_json)
+                                    parsed = json.loads(fixed_json)
+                                    if parsed.get('primary_driver') and parsed.get('explanation_vi'):
+                                        logger.info(f"[GEMINI] ✓ Fixed and parsed JSON")
+                                        return parsed
+                                except:
+                                    pass
                             continue
                             
             except Exception as e:
-                logger.error(f"Ollama call attempt {attempt+1} failed: {e}")
+                logger.error(f"[GEMINI] Call attempt {attempt+1} failed: {e}")
         
         # Smart fallback with actual data
+        logger.warning("[GEMINI] All attempts failed, using fallback explanation")
         return self._generate_fallback_explanation()
     
     def _generate_fallback_explanation(self):
@@ -1185,7 +1329,7 @@ Trả về JSON (KHÔNG có markdown):
 """
         
         try:
-            result = self._call_ollama(prompt)
+            result = self._call_gemini(prompt)
             if isinstance(result, dict):
                 return result
             else:
