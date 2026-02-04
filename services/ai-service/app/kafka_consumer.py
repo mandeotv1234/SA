@@ -13,7 +13,7 @@ from app.kafka_producer import produce_news_analyzed
 from app.modules.news_aggregator import process_news, start_scheduler, get_buffer_status
 
 KAFKA_BROKER = os.getenv("KAFKA_BROKERS", "localhost:9092")
-GROUP = os.getenv("KAFKA_GROUP", "ai-service-group")
+GROUP = os.getenv("KAFKA_GROUP", "ai-service-group-v3")
 
 # Topics configuration
 ANALYZED_TOPIC = os.getenv("NEWS_ANALYZED_TOPIC")
@@ -143,7 +143,7 @@ def start_consumer():
                 "published_at": j.get("published_at") or j.get("date") or original_raw.get("published_at"),
                 "sentiment_label": j.get('sentiment_label') or original_raw.get('sentiment'),
                 "sentiment_score": j.get('sentiment_score', 0),
-                "content": original_raw.get("content", "")[:2000],
+                "content": original_raw.get("content", "")[:10000000000000000000],
                 "category": original_raw.get("category", "General"),
                 "relevance_score": original_raw.get("relevance_score", 0.5),
                 "symbols": original_raw.get("symbols", ["BTCUSDT"])

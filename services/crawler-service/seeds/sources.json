@@ -125,22 +125,7 @@
         "category": "Vietnam"
     },
     {
-        "url": "https://ndh.vn/",
-        "type": "html",
-        "category": "VietnamFinance"
-    },
-    {
         "url": "https://diendandoanhnghiep.vn/",
-        "type": "html",
-        "category": "VietnamFinance"
-    },
-    {
-        "url": "https://baodautu.vn/tai-chinh-ngan-hang.html",
-        "type": "html",
-        "category": "VietnamFinance"
-    },
-    {
-        "url": "https://taichinhdoanhnghiep.net.vn/",
         "type": "html",
         "category": "VietnamFinance"
     },

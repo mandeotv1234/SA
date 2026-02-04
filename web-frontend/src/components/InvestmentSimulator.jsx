@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../store';
 import { useToast } from './ToastProvider';
+import { useRefreshVIPStatus } from '../hooks/useRefreshVIPStatus';
 import { TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, CheckCircle, X, BrainCircuit, Activity, Lock, ChevronDown, Bell, BellOff } from 'lucide-react';
 
 export default function InvestmentSimulator() {
     const { authFetch, user, symbol, token, isVip } = useStore();
     const { showToast } = useToast();
+
+    // Refresh VIP status on mount (in case user just upgraded)
+    useRefreshVIPStatus();
+
     const [investments, setInvestments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
@@ -198,38 +203,37 @@ export default function InvestmentSimulator() {
                 return rawAdvice; // Return as-is if not JSON
             }
 
-            // Extract the three main parts with various key variants
-            const recommendation = adviceObj['khuyến cáo']
-                || adviceObj['recommendation']
-                || adviceObj['advice']
-                || adviceObj['lời khuyên'];
+            // Map known keys to icons/labels for better formatting
+            const keyMap = {
+                'thời gian': '⏱️ Thời gian',
+                'time': '⏱️ Time',
+                'khuyến cáo': '💡 Khuyến cáo',
+                'recommendation': '💡 Recommendation',
+                'advice': '💡 Advice',
+                'lời khuyên': '💡 Lời khuyên',
+                'rủi ro': '⚠️ Rủi ro',
+                'risk': '⚠️ Risk',
+                'cảnh báo': '⚠️ Cảnh báo',
+                'hành động': '🎯 Hành động',
+                'action': '🎯 Action',
+                'khối lượng': '💰 Khối lượng',
+                'volume': '💰 Volume'
+            };
 
-            const risk = adviceObj['rủi ro']
-                || adviceObj['risk']
-                || adviceObj['cảnh báo'];
-
-            const action = adviceObj['hành động']
-                || adviceObj['action']
-                || adviceObj['khuyến cáo hành động']
-                || adviceObj['khuyên hành động'];
-
-            // Build formatted output
             const parts = [];
-            if (recommendation) parts.push(`💡 ${recommendation}`);
-            if (risk) parts.push(`⚠️ ${risk}`);
-            if (action) parts.push(`🎯 ${action}`);
+            Object.entries(adviceObj).forEach(([key, value]) => {
+                // Skip internal/meta keys if any, or just show all strings
+                if (typeof value === 'string' && value.trim()) {
+                    // Try to match key in map, otherwise format the key nicely
+                    const lowerKey = key.toLowerCase();
+                    const label = keyMap[lowerKey] || `🔹 ${key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}`;
+                    parts.push(`${label}: ${value}`);
+                }
+            });
 
             if (parts.length > 0) return parts.join('\n\n');
 
-            // Fallback: Join all string values found in the object
-            // This handles cases like {"thông_báo": "..."} clean text
-            const allValues = Object.values(adviceObj)
-                .filter(val => typeof val === 'string' && val.trim().length > 0);
-
-            if (allValues.length > 0) {
-                return allValues.join('\n\n');
-            }
-
+            // Fallback for non-string values or empty object
             return typeof adviceObj === 'string' ? adviceObj : JSON.stringify(adviceObj);
 
         } catch (e) {

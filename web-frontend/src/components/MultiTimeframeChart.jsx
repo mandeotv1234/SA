@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createChart } from 'lightweight-charts';
 import useStore from '../store';
 import { io } from 'socket.io-client';
+import { LoadingSpinner } from './LoadingSpinner';
+import { useTheme } from './ThemeProvider';
 
 export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     const chartContainerRef = useRef();
@@ -9,36 +11,52 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     const candleSeriesRef = useRef();
     const volumeSeriesRef = useRef();
     const socketRef = useRef(null);
-    const loadingRef = useRef(false);
+    const loadingBoolRef = useRef(false);
     const oldestTimeRef = useRef(null);
     const latestTimeRef = useRef(null); // Track latest timestamp for realtime updates
 
     const { authFetch } = useStore();
+    const { isDark } = useTheme();
     const [data, setData] = useState([]);
+    const [isLoading, setIsLoading] = useState(false); // UI loading state
 
-    // Initialize Chart
+    // Initialize Chart - recreate when theme changes
     useEffect(() => {
         if (!chartContainerRef.current) return;
 
         chartContainerRef.current.innerHTML = '';
 
+        // Theme-aware colors
+        const chartColors = isDark ? {
+            background: '#131722',
+            textColor: '#d1d4dc',
+            gridColor: 'rgba(42, 46, 57, 0.2)',
+            borderColor: '#2B2B43'
+        } : {
+            background: '#ffffff',
+            textColor: '#333333',
+            gridColor: 'rgba(0, 0, 0, 0.1)',
+            borderColor: '#e0e0e0'
+        };
+
         const chart = createChart(chartContainerRef.current, {
             layout: {
-                background: { type: 'solid', color: '#131722' },
-                textColor: '#d1d4dc',
+                background: { type: 'solid', color: chartColors.background },
+                textColor: chartColors.textColor,
             },
             grid: {
-                vertLines: { color: 'rgba(42, 46, 57, 0.2)' },
-                horzLines: { color: 'rgba(42, 46, 57, 0.2)' },
+                vertLines: { color: chartColors.gridColor },
+                horzLines: { color: chartColors.gridColor },
             },
             width: chartContainerRef.current.clientWidth,
             height: chartContainerRef.current.clientHeight,
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
+                borderColor: chartColors.borderColor,
             },
             rightPriceScale: {
-                borderColor: '#2B2B43',
+                borderColor: chartColors.borderColor,
             },
         });
 
@@ -65,7 +83,7 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
 
         // Subscribe to visible range changes for infinite scroll
         chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-            if (range && range.from < 0 && !loadingRef.current && oldestTimeRef.current) {
+            if (range && range.from < 0 && !loadingBoolRef.current && oldestTimeRef.current) {
                 loadHistory(oldestTimeRef.current);
             }
         });
@@ -87,12 +105,14 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             }
             chart.remove();
         };
-    }, [chartId]);
+    }, [chartId, isDark]); // Recreate chart when theme changes
+
 
     // Load Historical Data with infinite scroll support
-    const loadHistory = async (endTimeUI = null) => {
-        if (loadingRef.current) return;
-        loadingRef.current = true;
+    const loadHistory = async (endTimeUI = null, showLoading = false) => {
+        if (loadingBoolRef.current) return;
+        loadingBoolRef.current = true;
+        if (showLoading) setIsLoading(true);
 
         try {
             const url = `/v1/klines?symbol=${symbol}&limit=1000&interval=${timeframe}${endTimeUI ? `&end=${endTimeUI}` : ''}`;
@@ -100,7 +120,8 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             if (res.ok) {
                 const raw = await res.json();
                 if (raw.length === 0) {
-                    loadingRef.current = false;
+                    loadingBoolRef.current = false;
+                    setIsLoading(false);
                     return;
                 }
 
@@ -145,7 +166,8 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         } catch (e) {
             console.error(`[${chartId}] Fetch history failed`, e);
         } finally {
-            loadingRef.current = false;
+            loadingBoolRef.current = false;
+            setIsLoading(false);
         }
     };
 
@@ -154,10 +176,10 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         setData([]);
         oldestTimeRef.current = null;
         latestTimeRef.current = null; // Reset latest time
-        loadHistory(null);
+        loadHistory(null, true); // Show loading spinner on symbol/timeframe change
     }, [symbol, timeframe]);
 
-    // Update Chart Data
+    // Update Chart Data - also run when theme changes to reapply data to new chart
     useEffect(() => {
         if (candleSeriesRef.current && volumeSeriesRef.current && data.length > 0) {
             candleSeriesRef.current.setData(data);
@@ -175,7 +197,7 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             // Update latest time for realtime updates
             latestTimeRef.current = data[data.length - 1].time;
         }
-    }, [data]);
+    }, [data, isDark]); // Include isDark to reapply data when theme changes and chart is recreated
 
     // Socket.IO for Realtime Updates (all timeframes)
     useEffect(() => {
@@ -286,9 +308,31 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     }, [symbol, timeframe, chartId]);
 
     return (
-        <div
-            ref={chartContainerRef}
-            style={{ width: '100%', height: '100%', position: 'relative' }}
-        />
+        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+            <div
+                ref={chartContainerRef}
+                style={{ width: '100%', height: '100%' }}
+            />
+            {/* Loading Overlay */}
+            {isLoading && (
+                <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0, 0, 0, 0.6)',
+                    backdropFilter: 'blur(2px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 10,
+                    animation: 'fadeIn 0.2s ease-out'
+                }}>
+                    <LoadingSpinner size="md" text="Đang tải..." />
+                </div>
+            )}
+        </div>
     );
 }
+

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import useStore from '../store';
+import { useRefreshVIPStatus } from '../hooks/useRefreshVIPStatus';
 import NewsList from './NewsList';
 import InsightsList from './InsightsList';
 import Watchlist from './Watchlist';
@@ -9,6 +10,9 @@ import { Newspaper, BrainCircuit, Lock, List } from 'lucide-react';
 export default function Sidebar() {
     const { isVip } = useStore();
     const [activeTab, setActiveTab] = useState('watchlist');
+
+    // Refresh VIP status on mount
+    useRefreshVIPStatus();
 
     const triggerUpgrade = () => {
         window.dispatchEvent(new CustomEvent('showUpgradeModal'));
@@ -38,6 +42,7 @@ export default function Sidebar() {
                     title="Phân tích AI"
                 >
                     <BrainCircuit size={16} />
+                    {!isVip && <span className="vip-badge-mini" style={{ marginLeft: 4 }}>VIP</span>}
                 </button>
             </div>
 

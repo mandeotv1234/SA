@@ -15,7 +15,7 @@ from urllib3.util.retry import Retry
 import redis
 from email.utils import parsedate_to_datetime
 
-from app.db import init_db, get_active_sources, update_source_status
+from app.db import init_db, get_active_sources, update_source_status, save_article
 from app.services.discovery import get_links_from_rss, get_links_from_html
 from app.services.extractor import smart_extract
 from app.kafka_producer import produce_news, close_producer, create_startup_topics
@@ -50,7 +50,12 @@ def _make_session() -> requests.Session:
     adapter = HTTPAdapter(max_retries=retries)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
-    s.headers.update({"User-Agent": "crawler-service/1.0 (Refined Architecture)"})
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1"
+    })
     return s
 
 session = _make_session()
@@ -76,12 +81,14 @@ def _is_crypto_related(title: str, content: str) -> bool:
 
 async def process_article_task(item: dict):
     """Async task to extract and publish article."""
-    url = item.get('link')
+    url = item.get('link') or item.get('url')
+    LOG.info(f"DEBUG: Processing task for {url}")
     if not url: return
 
     key = f"crawler:seen:{_url_hash(url)}"
     if redis_client.exists(key):
-        return
+         LOG.debug(f"Skipping seen url: {url}")
+         return
 
     # Check directly provided content first (RSS optimization)
     # DISABLE RSS SHORTCUT to force HTML Fetching & Structure Learning behaviors
@@ -125,20 +132,24 @@ async def process_article_task(item: dict):
             return
              
         # 3. Publish
+        # import time <-- REMOVED
         payload = {
             'source': host.replace("www.", ""),
             'url': url,
             'title': data.get('title'),
             'content': data.get('content'),
-            'published_at': data.get('date'),
+            'published_at': data.get('date'),  # Original publish time from article
+            'crawl_timestamp': time.time(),    # When we crawled it
             'symbol': data.get('symbols', ['BTCUSDT'])[0] if data.get('symbols') else None,
+            'symbols': data.get('symbols', ['BTCUSDT']),  # All related symbols
             'category': data.get('category', 'General'),
             'sentiment': data.get('sentiment', 'Neutral'),
             'relevance_score': data.get('relevance_score', 0.5)
         }
         
         produce_news(payload)
-        LOG.info(f"Published: {payload['title']} ({url})")
+        save_article(payload)  # Save detailed content to Mongo
+        LOG.info(f"Published & Saved: {payload['title']} ({url})")
         
         redis_client.set(key, 1, ex=REDIS_TTL)
         
@@ -234,7 +245,7 @@ async def shutdown_event():
 
 @app.post('/crawl/')
 async def crawl_endpoint(req: CrawlRequest):
-    asyncio.create_task(process_article_task(req.url))
+    asyncio.create_task(process_article_task({'link': req.url}))
     return {"status": "queued"}
 
 @app.get('/health')

@@ -56,7 +56,6 @@ const flushBufferToDB = async () => {
     `;
 
     await client.query(queryText, values);
-    console.log(`Saved ${uniqueBatch.length} klines to DB (deduplicated from ${currentBatch.length})`);
   } catch (err) {
     console.error('Error batch inserting klines:', err);
     // in case of failure, re-insert currentBatch back to messageBuffer head for retry

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from collections import deque
 
 from app.kafka_producer import produce_ai_insight
-from app.modules.ollama_client import OllamaClient
+from app.modules.gemini_client import GeminiClient
 
 
 from app.modules.inference import InferenceEngine
@@ -64,25 +64,58 @@ def add_news(news_payload: Dict) -> bool:
     if "Google News" in title or not title:
         return False
     
+    # Parse proper timestamp from crawler's published_at field
+    news_timestamp = time.time()  # Default to now
+    published_at = news_payload.get("published_at") or news_payload.get("date")
+    if published_at:
+        try:
+            if isinstance(published_at, (int, float)):
+                news_timestamp = float(published_at)
+            elif isinstance(published_at, str):
+                # Parse ISO format or other date strings
+                from dateutil import parser as dateparser
+                parsed_dt = dateparser.parse(published_at)
+                if parsed_dt:
+                    news_timestamp = parsed_dt.timestamp()
+        except Exception as e:
+            LOG.warning(f"Failed to parse published_at '{published_at}': {e}")
+    
     with _buffer_lock:
         if url in _seen_urls:
             return False
         
         _seen_urls.add(url)
         
+        # Extract proper source name
+        source = news_payload.get("source", "Unknown")
+        if not source or source == "Unknown":
+            try:
+                from urllib.parse import urlparse
+                source = urlparse(url).netloc.replace("www.", "")
+            except:
+                source = "Unknown"
+        
         article = {
             "url": url,
             "title": news_payload.get("title", ""),
-            "content": news_payload.get("content", "")[:2000],
+            "content": news_payload.get("content", "")[:100000000000000],
             "sentiment": news_payload.get("sentiment_label") or news_payload.get("sentiment", "Neutral"),
+            "sentiment_score": float(news_payload.get("sentiment_score", 0)),
             "symbols": news_payload.get("symbols", ["BTCUSDT"]),
             "relevance": float(news_payload.get("relevance_score", 0.5)),
             "category": news_payload.get("category", "General"),
-            "timestamp": time.time()
+            "source": source,
+            "timestamp": news_timestamp,  # Use actual publication time!
+            "received_at": time.time()    # When we received it
         }
         
         _news_buffer.append(article)
-        print(f"[BUFFER+] Added #{len(_news_buffer)}: {article['title'][:40]}...")
+        
+        # More detailed log
+        time_ago = int((time.time() - news_timestamp) / 60)
+        content_len = len(article['content'])
+        pub_str = datetime.fromtimestamp(news_timestamp, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[BUFFER+] Added #{len(_news_buffer)}: [{source}] {article['title'][:40]}... | ContentLen: {content_len} | Pub: {pub_str}")
         
         return True
 
@@ -185,12 +218,9 @@ def run_scheduled_prediction() -> Dict:
     global _last_result
     _last_result = result_payload
 
-    # Also publish aggregated result for market overview
-    try:
-        produce_ai_insight(result_payload)
-        print(f"[KAFKA] Published aggregated_prediction (all {len(predictions)} symbols)")
-    except Exception as e:
-        print(f"[KAFKA ERROR] {e}")
+    # Note: Each prediction is already published individually above (line 178)
+    # No need to publish aggregated result again
+    
     
     return result_payload
 

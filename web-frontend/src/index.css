@@ -13,16 +13,16 @@
   --accent-yellow: #f0b90b;
   --border-color: #252930;
   --border-hover: #3a3f47;
-  
+
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
-  
+
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
   --shadow-glow-blue: 0 0 20px rgba(56, 97, 251, 0.3);
   --shadow-glow-green: 0 0 20px rgba(14, 203, 129, 0.3);
-  
+
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -156,9 +156,12 @@ body {
 }
 
 @keyframes pulse-glow {
-  0%, 100% {
+
+  0%,
+  100% {
     filter: drop-shadow(0 0 8px rgba(56, 97, 251, 0.5));
   }
+
   50% {
     filter: drop-shadow(0 0 12px rgba(56, 97, 251, 0.8));
   }
@@ -254,6 +257,7 @@ body {
     opacity: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -377,8 +381,15 @@ body {
 }
 
 @keyframes shimmer {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .tab-btn.active.vip {
@@ -1157,9 +1168,12 @@ body {
 }
 
 @keyframes vip-pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 10px rgba(240, 185, 11, 0.5);
   }
+
   50% {
     box-shadow: 0 0 20px rgba(240, 185, 11, 0.8);
   }
@@ -1317,4 +1331,571 @@ body {
 
 .toast-info .toast-icon {
   color: var(--accent-blue);
+}
+
+/* ========================================
+   LOADING ANIMATIONS
+   ======================================== */
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scaleY(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+
+  50% {
+    transform: scale(1.05);
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Loading Spinner */
+.loading-spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+/* Skeleton Loading */
+.skeleton {
+  background: linear-gradient(90deg,
+      var(--bg-secondary, #1a1a1a) 25%,
+      var(--bg-tertiary, #2a2a2a) 50%,
+      var(--bg-secondary, #1a1a1a) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* ========================================
+   THEME VARIABLES (Light Mode Override)
+   ======================================== */
+
+:root {
+  /* Default Theme Variables (used by ThemeProvider) */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #2a2a2a;
+  --card-bg: #1a1a1a;
+  --card-border: #2a2a2a;
+  --navbar-bg: #111111;
+  --sidebar-bg: #141414;
+  --input-bg: #1a1a1a;
+  --input-border: #333333;
+  --modal-overlay: rgba(0, 0, 0, 0.8);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+
+  /* Accent colors - shared across themes */
+  --accent-color: #3498db;
+  --accent-hover: #2980b9;
+}
+
+/* Light Theme (applied via data-theme attribute) */
+[data-theme="light"] {
+  --bg-dark: #f8f9fa;
+  --bg-panel: #ffffff;
+  --bg-hover: #f0f0f0;
+  --bg-elevated: #ffffff;
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-tertiary: #888888;
+  --border-color: #e0e0e0;
+  --border-hover: #cccccc;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .navbar {
+  background-color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .sidebar-container {
+  background-color: #f8f9fa;
+}
+
+[data-theme="light"] .chart-container {
+  background-color: #ffffff;
+}
+
+[data-theme="light"] .card {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .login-card {
+  background-color: #ffffff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .login-input {
+  background-color: #f5f5f5;
+  border-color: #e0e0e0;
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .dropdown-menu {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .tab-btn:hover {
+  background-color: rgba(52, 152, 219, 0.1);
+}
+
+[data-theme="light"] .insight-item,
+[data-theme="light"] .news-item {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .insight-detail {
+  background-color: #f5f5f5;
+}
+
+/* ========================================
+   LIGHT MODE: AI INSIGHTS & PREDICTIONS
+   ======================================== */
+
+[data-theme="light"] .insights-list {
+  background-color: #f8f9fa;
+}
+
+[data-theme="light"] .aggregated-prediction {
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .current-symbol-pred {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .pred-header {
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .pred-card {
+  background-color: #f5f5f5 !important;
+  border-color: #e0e0e0 !important;
+}
+
+[data-theme="light"] .stat-label {
+  color: #666666 !important;
+}
+
+[data-theme="light"] .stat-value {
+  color: #1a1a1a !important;
+}
+
+/* Causal Analysis in Light Mode */
+[data-theme="light"] .causal-analysis {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="light"] .causal-driver,
+[data-theme="light"] .causal-event {
+  color: #555555 !important;
+}
+
+[data-theme="light"] .causal-driver strong,
+[data-theme="light"] .causal-event strong {
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .causal-explanation {
+  color: #333333 !important;
+}
+
+[data-theme="light"] .causal-reasoning-section {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="light"] .actionable-advice {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+  color: #333333 !important;
+}
+
+[data-theme="light"] .actionable-advice strong {
+  color: #1a1a1a !important;
+}
+
+/* News Sources Section */
+[data-theme="light"] .news-sources {
+  background-color: #f5f5f5 !important;
+}
+
+[data-theme="light"] .source-item {
+  color: #333333 !important;
+}
+
+/* Sentiment Impact */
+[data-theme="light"] .sentiment-impact {
+  color: #666666 !important;
+}
+
+/* Market Overview */
+[data-theme="light"] .market-overview {
+  background-color: #f5f5f5 !important;
+  color: #333333 !important;
+}
+
+/* Forecast Cards */
+[data-theme="light"] .forecast-1h,
+[data-theme="light"] .forecast-24h {
+  background-color: #f5f5f5 !important;
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .forecast-row span {
+  color: #333333 !important;
+}
+
+/* Left Toolbar */
+[data-theme="light"] .left-toolbar {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+/* Symbol Selector Bar */
+[data-theme="light"] .symbol-selector-bar {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .symbol-buttons .symbol-btn {
+  background-color: #f5f5f5;
+  border-color: #e0e0e0;
+  color: #333333;
+}
+
+[data-theme="light"] .symbol-buttons .symbol-btn:hover {
+  background-color: #e8e8e8;
+}
+
+[data-theme="light"] .symbol-buttons .symbol-btn.active {
+  background: linear-gradient(135deg, var(--accent-blue) 0%, #2952cc 100%);
+  color: white;
+}
+
+/* Chart Header */
+[data-theme="light"] .chart-header {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .chart-header h4 {
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .chart-header select {
+  background-color: #f5f5f5;
+  border-color: #e0e0e0;
+  color: #333333;
+}
+
+/* Sidebar Tabs */
+[data-theme="light"] .tabs {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .tab-btn {
+  color: #666666;
+}
+
+[data-theme="light"] .tab-btn.active {
+  background-color: #f5f5f5;
+}
+
+/* Sidebar Content */
+[data-theme="light"] .sidebar-content {
+  background-color: #f8f9fa;
+}
+
+/* No Prediction Message */
+[data-theme="light"] .no-prediction {
+  color: #666666 !important;
+}
+
+[data-theme="light"] .no-prediction p,
+[data-theme="light"] .no-prediction small {
+  color: #666666 !important;
+}
+
+/* Explanation Section */
+[data-theme="light"] .explanation-section {
+  background-color: rgba(59, 130, 246, 0.05) !important;
+}
+
+[data-theme="light"] .explanation-content {
+  color: #333333 !important;
+}
+
+[data-theme="light"] .explanation-header {
+  color: var(--accent-blue) !important;
+}
+
+/* News Impact Section */
+[data-theme="light"] .news-impact-section {
+  background-color: #f5f5f5 !important;
+}
+
+[data-theme="light"] .news-impact-header {
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .news-impact-item {
+  background-color: #ffffff !important;
+  border-color: #e0e0e0 !important;
+}
+
+[data-theme="light"] .news-impact-title {
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .news-impact-meta {
+  color: #666666 !important;
+}
+
+[data-theme="light"] .news-impact-analysis {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+  color: #333333 !important;
+}
+
+[data-theme="light"] .impact-mechanism,
+[data-theme="light"] .impact-quote,
+[data-theme="light"] .impact-prediction {
+  color: #333333 !important;
+}
+
+/* Timestamp */
+[data-theme="light"] .pred-timestamp {
+  background-color: #f5f5f5 !important;
+  color: #666666 !important;
+}
+
+[data-theme="light"] .timestamp-label,
+[data-theme="light"] .timestamp-value {
+  color: #666666 !important;
+}
+
+/* Sources Header */
+[data-theme="light"] .sources-header {
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .source-title {
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .source-meta {
+  color: #666666 !important;
+}
+
+/* Direction Badge Colors - Keep visible */
+[data-theme="light"] .direction-badge {
+  color: white !important;
+}
+
+/* History Items */
+[data-theme="light"] .history-item {
+  background-color: #ffffff !important;
+  border-color: #e0e0e0 !important;
+}
+
+[data-theme="light"] .history-time {
+  color: #666666 !important;
+}
+
+[data-theme="light"] .history-title {
+  color: #1a1a1a !important;
+}
+
+/* Investment Simulator Light Mode */
+[data-theme="light"] .investment-simulator {
+  background-color: #f8f9fa;
+}
+
+[data-theme="light"] .investment-simulator h2 {
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .investment-table-container {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .simulator-table th {
+  background-color: #f5f5f5 !important;
+  color: #1a1a1a !important;
+}
+
+[data-theme="light"] .simulator-table td {
+  color: #333333 !important;
+  border-color: #e0e0e0 !important;
+}
+
+[data-theme="light"] .simulator-table tr:hover {
+  background-color: #f5f5f5 !important;
+}
+
+[data-theme="light"] .advice-text {
+  color: #333333 !important;
+}
+
+[data-theme="light"] .analysis-preview {
+  background-color: #ffffff;
+  border-color: #e0e0e0;
+}
+
+[data-theme="light"] .analysis-header {
+  color: var(--accent-blue) !important;
+}
+
+[data-theme="light"] .vip-lock-container {
+  color: #333333;
+}
+
+[data-theme="light"] .vip-benefits {
+  color: #666666 !important;
+}
+
+
+/* Theme transition for smooth switching */
+body,
+.navbar,
+.sidebar-container,
+.chart-container,
+.card,
+.login-card,
+.dropdown-menu,
+.insight-item,
+.news-item {
+  transition: background-color 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+/* ========================================
+   LOADING STATE CLASSES
+   ======================================== */
+
+.is-loading {
+  position: relative;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.is-loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+/* Hover effects for theme toggle and settings buttons */
+.theme-toggle-btn:hover,
+.settings-btn:hover {
+  background: var(--bg-hover) !important;
+  transform: scale(1.05);
+}
+
+.theme-toggle-btn:active,
+.settings-btn:active {
+  transform: scale(0.95);
+}
+
+/* Spinning Animation */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+/* Animate spin for loading buttons */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Smooth fade transitions */
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.bounce-in {
+  animation: bounceIn 0.4s ease-out;
 }

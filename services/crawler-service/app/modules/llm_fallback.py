@@ -7,6 +7,10 @@ from typing import Dict
 from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 import trafilatura
+import os
+import json
+import requests
+import re
 
 LOG = logging.getLogger("crawler.extraction")
 
@@ -20,13 +24,26 @@ CRYPTO_KEYWORDS = [
 ]
 
 SYMBOL_MAPPING = {
+    # Bitcoin
     'bitcoin': 'BTCUSDT', 'btc': 'BTCUSDT',
-    'ethereum': 'ETHUSDT', 'eth': 'ETHUSDT',
+    # Ethereum
+    'ethereum': 'ETHUSDT', 'eth': 'ETHUSDT', 'ether': 'ETHUSDT',
+    # Solana
     'solana': 'SOLUSDT', 'sol': 'SOLUSDT',
-    'bnb': 'BNBUSDT', 'binance coin': 'BNBUSDT',
+    # Binance Coin
+    'bnb': 'BNBUSDT', 'binance coin': 'BNBUSDT', 'binance': 'BNBUSDT',
+    # Dogecoin
     'dogecoin': 'DOGEUSDT', 'doge': 'DOGEUSDT',
+    # XRP/Ripple
     'xrp': 'XRPUSDT', 'ripple': 'XRPUSDT',
+    # Cardano
     'cardano': 'ADAUSDT', 'ada': 'ADAUSDT',
+    # Avalanche
+    'avalanche': 'AVAXUSDT', 'avax': 'AVAXUSDT',
+    # Polkadot
+    'polkadot': 'DOTUSDT', 'dot': 'DOTUSDT',
+    # Polygon
+    'polygon': 'POLUSDT', 'matic': 'POLUSDT', 'pol': 'POLUSDT',
 }
 
 
@@ -75,7 +92,7 @@ def _extract_content(html: str) -> str:
     """Extract main content using trafilatura."""
     content = trafilatura.extract(html)
     if content:
-        return content[:5000]  # Limit length
+        return content
     return ""
 
 
@@ -130,6 +147,14 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
             paragraphs = [p.get_text().strip() for p in soup.find_all("p") if len(p.get_text().strip()) > 50]
             content = "\n\n".join(paragraphs[:10])[:5000]
         
+        # --- LLM FALLBACK START ---
+        if (not content or len(content) < 200) and os.getenv("GEMINI_API_KEY"):
+            LOG.info(f"Heuristics failed for {url}. Attempting LLM extraction via Gemini...")
+            llm_result = extract_with_gemini(html, url)
+            if llm_result:
+                return llm_result
+        # --- LLM FALLBACK END ---
+
         full_text = f"{title} {content}"
         
         symbols = _detect_symbols(full_text)
@@ -164,3 +189,30 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
             "detail": str(e),
             "url": url
         }
+
+
+def extract_with_gemini(html: str, url: str) -> Dict | None:
+    """
+    Use Gemini to parse difficult HTML structure.
+    """
+    try:
+        from .gemini_client import GeminiClient
+        
+        # Strip script/style to save tokens
+        soup = BeautifulSoup(html, "html.parser")
+        for script in soup(["script", "style", "svg", "noscript"]):
+            script.extract()
+        clean_html = soup.get_text(separator=' ', strip=True)[:8000]  # Limit input
+        
+        # Use Gemini client
+        client = GeminiClient()
+        result = client.extract_article(clean_html, url)
+        
+        if result:
+            LOG.info(f"[GEMINI] Successfully extracted: {result.get('title', '')[:50]}...")
+        
+        return result
+        
+    except Exception as e:
+        LOG.error(f"Gemini Extraction failed: {e}")
+        return None

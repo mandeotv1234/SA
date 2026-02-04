@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import useStore from '../store';
 import { TrendingUp, TrendingDown, Minus, RefreshCw, Zap, AlertTriangle, Bell, BellOff } from 'lucide-react';
+import { InsightsSkeleton } from './LoadingSpinner';
 
 export default function InsightsList() {
     const { authFetch, currentSymbol, user } = useStore();
@@ -243,55 +244,103 @@ export default function InsightsList() {
                 <div className="forecast-24h">
                     <div className="forecast-header">📅 Dự báo 24 Giờ</div>
                     <div className="forecast-content">
-                        <div className="forecast-direction" style={{ color: getDirectionStyle(forecast24h.direction).color }}>
-                            {getDirectionStyle(forecast24h.direction).icon}
-                            <span>{getDirectionStyle(forecast24h.direction).label}</span>
-                        </div>
-                        {forecast24h.expected_range && (
-                            <div className="price-range">
-                                <span className="range-label">Khoảng giá:</span>
-                                <span className="range-values">
-                                    ${forecast24h.expected_range.low?.toLocaleString()} - ${forecast24h.expected_range.high?.toLocaleString()}
-                                </span>
-                            </div>
-                        )}
-                        <div className="forecast-confidence">
-                            Độ tin cậy: {forecast24h.confidence?.toFixed(1)}%
-                        </div>
+                        {(() => {
+                            const expectedPrice24h = forecast24h.expected_price || 0;
+                            const currentPrice = currentSymbolPred.current_price || 0;
+                            const priceChange24h = expectedPrice24h - currentPrice;
+                            const changePercent24h = forecast24h.price_change_percent ||
+                                (currentPrice > 0 ? (priceChange24h / currentPrice) * 100 : 0);
+
+                            const style = getDirectionStyle(forecast24h.direction);
+
+                            return (
+                                <>
+                                    <div className="forecast-direction" style={{ color: style.color }}>
+                                        {style.icon}
+                                        <span>{style.label}</span>
+                                        <span className="price-change-24h">
+                                            {changePercent24h > 0 ? '+' : ''}{changePercent24h.toFixed(2)}%
+                                        </span>
+                                    </div>
+                                    {expectedPrice24h > 0 && (
+                                        <div className="price-target-24h">
+                                            <span className="target-label">Giá mục tiêu:</span>
+                                            <span className="target-value" style={{ color: style.color }}>
+                                                ${expectedPrice24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {forecast24h.expected_range && (
+                                        <div className="price-range">
+                                            {/* <span className="range-label">Khoảng dao động:</span>
+                                            <span className="range-values">
+                                                ${forecast24h.expected_range.low?.toLocaleString()} - ${forecast24h.expected_range.high?.toLocaleString()}
+                                            </span> */}
+                                        </div>
+                                    )}
+                                    <div className="forecast-confidence">
+                                        Độ tin cậy: {forecast24h.confidence?.toFixed(1)}%
+                                    </div>
+                                </>
+                            );
+                        })()}
                     </div>
                 </div>
 
-                {/* Causal Analysis */}
-                {causal.explanation_vi && (
-                    <div className="causal-analysis">
-                        <div className="causal-header">
-                            <Zap size={12} />
-                            Phân Tích Nhân Quả
+                {/* NEW: Comprehensive Explanation (Single Paragraph) */}
+                {currentSymbolPred.explanation && (
+                    <div className="explanation-section">
+                        <div className="explanation-header">
+                            <Zap size={14} />
+                            Phân Tích AI
                         </div>
-                        <div className="causal-content">
-                            <div className="causal-driver">
-                                <strong>Động lực chính:</strong> {causal.primary_driver?.replace('_', ' ')}
-                            </div>
-                            {causal.key_event && (
-                                <div className="causal-event">
-                                    <strong>Sự kiện:</strong> {causal.key_event}
-                                </div>
-                            )}
-                            <div className="causal-explanation">
-                                {causal.explanation_vi}
-                            </div>
-                            {causal.sentiment_impact && (
-                                <div className="sentiment-impact">
-                                    <span>Chỉ số cảm xúc: {causal.sentiment_impact.news_sentiment?.toFixed(2)}</span>
-                                    <span>Khối lượng: {causal.sentiment_impact.social_volume}</span>
-                                </div>
-                            )}
+                        <div className="explanation-content">
+                            {currentSymbolPred.explanation}
                         </div>
                     </div>
                 )}
 
-                {/* News Sources */}
-                {sources.length > 0 && (
+                {/* NEW: News Impact Analysis with LLM details */}
+                {currentSymbolPred.news_impact_analysis?.top_articles?.length > 0 && (
+                    <div className="news-impact-section">
+                        <div className="news-impact-header">
+                            📰 Tin Tức Tác Động ({currentSymbolPred.news_impact_analysis.overall_sentiment})
+                        </div>
+                        {currentSymbolPred.news_impact_analysis.top_articles.slice(0, 3).map((article, idx) => (
+                            <div key={idx} className="news-impact-item">
+                                <div className="news-impact-title">
+                                    {article.has_direct_mention && <span className="direct-badge">Trực tiếp</span>}
+                                    {article.title?.substring(0, 80)}{article.title?.length > 80 ? '...' : ''}
+                                </div>
+                                <div className="news-impact-meta">
+                                    <span className="news-source">{article.source}</span>
+                                    <span className={`sentiment-badge ${article.sentiment_score > 0.3 ? 'positive' : article.sentiment_score < -0.3 ? 'negative' : 'neutral'}`}>
+                                        {article.sentiment_score > 0.3 ? '📈' : article.sentiment_score < -0.3 ? '📉' : '➡️'}
+                                        {article.sentiment_score?.toFixed(2)}
+                                    </span>
+                                </div>
+                                {article.llm_analysis?.is_relevant && (
+                                    <div className="news-impact-analysis">
+                                        <div className="impact-mechanism">
+                                            <strong>Cơ chế:</strong> {article.llm_analysis.impact_mechanism}
+                                        </div>
+                                        {article.llm_analysis.key_quote && article.llm_analysis.key_quote !== article.title && (
+                                            <div className="impact-quote">
+                                                "{article.llm_analysis.key_quote?.substring(0, 150)}..."
+                                            </div>
+                                        )}
+                                        <div className="impact-prediction">
+                                            Tác động: <strong>{article.llm_analysis.predicted_impact}</strong>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Legacy: News Sources (fallback if no news_impact_analysis) */}
+                {!currentSymbolPred.news_impact_analysis?.top_articles?.length && sources.length > 0 && (
                     <div className="news-sources">
                         <div className="sources-header">📰 Tin Tức Ảnh Hưởng</div>
                         {sources.map((source, idx) => (
@@ -354,7 +403,9 @@ export default function InsightsList() {
 
             {/* Content */}
             <div className="insights-content">
-                {activeTab === 'prediction' && renderAggregatedPrediction()}
+                {activeTab === 'prediction' && (
+                    loading ? <InsightsSkeleton /> : renderAggregatedPrediction()
+                )}
 
                 {activeTab === 'history' && (
                     <div className="history-list">
@@ -591,6 +642,32 @@ export default function InsightsList() {
                     font-weight: bold;
                 }
 
+                .price-change-24h {
+                    font-size: 13px;
+                    font-weight: 700;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    background: rgba(255,255,255,0.1);
+                    margin-left: auto;
+                }
+
+                .price-target-24h {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-size: 12px;
+                    margin: 6px 0;
+                }
+
+                .target-label {
+                    color: #999;
+                }
+
+                .target-value {
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+
                 .price-range {
                     font-size: 11px;
                     color: #999;
@@ -657,6 +734,22 @@ export default function InsightsList() {
                     font-size: 10px;
                     color: #777;
                     margin-top: 4px;
+                }
+
+                .actionable-advice {
+                    background: rgba(59, 130, 246, 0.1);
+                    border-left: 3px solid var(--accent-blue);
+                    padding: 8px 10px;
+                    margin-top: 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    color: #ccc;
+                    line-height: 1.5;
+                }
+
+                .actionable-advice strong {
+                    color: var(--accent-blue);
+                    margin-right: 4px;
                 }
 
                 .news-sources {
@@ -796,6 +889,308 @@ export default function InsightsList() {
                     padding: 20px;
                     font-size: 12px;
                 }
+
+                /* NEW: Causal Reasoning 3-Layer Styles */
+                .causal-reasoning-section {
+                    background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.05));
+                    border: 1px solid rgba(59, 130, 246, 0.2);
+                    border-radius: 12px;
+                    padding: 12px;
+                    margin-top: 8px;
+                }
+
+                .causal-reasoning-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: var(--accent-blue);
+                    margin-bottom: 12px;
+                    padding-bottom: 8px;
+                    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+                }
+
+                .reasoning-layer {
+                    background: rgba(255, 255, 255, 0.03);
+                    border-radius: 8px;
+                    padding: 10px;
+                    margin-bottom: 8px;
+                    border-left: 3px solid #666;
+                }
+
+                .reasoning-layer.alignment-layer {
+                    border-left-color: #10b981;
+                }
+
+                .reasoning-layer.impact-layer {
+                    border-left-color: #f59e0b;
+                }
+
+                .reasoning-layer.divergence-layer {
+                    border-left-color: #8b5cf6;
+                }
+
+                .reasoning-layer.divergence-layer.has-divergence {
+                    border-left-color: #ef4444;
+                    background: rgba(239, 68, 68, 0.05);
+                }
+
+                .layer-title {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #aaa;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    margin-bottom: 6px;
+                }
+
+                .layer-icon {
+                    font-size: 12px;
+                }
+
+                .layer-content {
+                    font-size: 11px;
+                    color: #ccc;
+                    line-height: 1.5;
+                }
+
+                .layer-summary {
+                    color: #ddd;
+                }
+
+                .alignment-details {
+                    display: flex;
+                    gap: 12px;
+                    margin-top: 6px;
+                    font-size: 10px;
+                    color: #888;
+                }
+
+                .alignment-details strong {
+                    color: var(--accent-green);
+                }
+
+                .impact-mechanism {
+                    margin-bottom: 6px;
+                }
+
+                .mechanism-type {
+                    background: rgba(245, 158, 11, 0.2);
+                    color: #f59e0b;
+                    padding: 3px 8px;
+                    border-radius: 4px;
+                    font-size: 10px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                }
+
+                .trading-recommendation {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin-top: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+
+                .trading-recommendation.buy {
+                    background: rgba(16, 185, 129, 0.08);
+                    border-color: rgba(16, 185, 129, 0.3);
+                }
+
+                .trading-recommendation.sell {
+                    background: rgba(239, 68, 68, 0.08);
+                    border-color: rgba(239, 68, 68, 0.3);
+                }
+
+                .trading-recommendation.wait {
+                    background: rgba(245, 158, 11, 0.08);
+                    border-color: rgba(245, 158, 11, 0.3);
+                }
+
+                .recommendation-action {
+                    font-size: 14px;
+                    font-weight: 700;
+                    margin-bottom: 8px;
+                    text-align: center;
+                }
+
+                .recommendation-detail {
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 11px;
+                    padding: 4px 0;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                }
+
+                .recommendation-detail .label {
+                    color: #888;
+                }
+
+                .recommendation-detail .value {
+                    color: #ccc;
+                    font-weight: 600;
+                }
+
+                .recommendation-detail .value.stop-loss {
+                    color: var(--accent-red);
+                }
+
+                .recommendation-detail .value.take-profit {
+                    color: var(--accent-green);
+                }
+
+                .recommendation-warning {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    margin-top: 8px;
+                    padding: 8px;
+                    background: rgba(245, 158, 11, 0.1);
+                    border-radius: 4px;
+                    color: #f59e0b;
+                    font-size: 10px;
+                    line-height: 1.4;
+                }
+
+                /* NEW: Explanation Section Styles */
+                .explanation-section {
+                    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
+                    border-radius: 8px;
+                    padding: 12px;
+                    border: 1px solid rgba(59, 130, 246, 0.2);
+                }
+
+                .explanation-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #3b82f6;
+                    margin-bottom: 10px;
+                }
+
+                .explanation-content {
+                    font-size: 12px;
+                    line-height: 1.6;
+                    color: #e0e0e0;
+                    text-align: justify;
+                }
+
+                /* NEW: News Impact Analysis Styles */
+                .news-impact-section {
+                    background: rgba(255, 255, 255, 0.03);
+                    border-radius: 8px;
+                    padding: 10px;
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                }
+
+                .news-impact-header {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #aaa;
+                    margin-bottom: 10px;
+                    padding-bottom: 6px;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                }
+
+                .news-impact-item {
+                    padding: 10px;
+                    border-radius: 6px;
+                    background: rgba(255, 255, 255, 0.02);
+                    margin-bottom: 8px;
+                    border-left: 3px solid rgba(59, 130, 246, 0.5);
+                }
+
+                .news-impact-item:last-child {
+                    margin-bottom: 0;
+                }
+
+                .news-impact-title {
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #ddd;
+                    margin-bottom: 6px;
+                    line-height: 1.4;
+                }
+
+                .direct-badge {
+                    display: inline-block;
+                    font-size: 9px;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    background: rgba(34, 197, 94, 0.2);
+                    color: #22c55e;
+                    margin-right: 6px;
+                    font-weight: 700;
+                }
+
+                .news-impact-meta {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 8px;
+                }
+
+                .news-source {
+                    font-size: 10px;
+                    color: #888;
+                }
+
+                .sentiment-badge {
+                    font-size: 10px;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-weight: 600;
+                }
+
+                .sentiment-badge.positive {
+                    background: rgba(34, 197, 94, 0.15);
+                    color: #22c55e;
+                }
+
+                .sentiment-badge.negative {
+                    background: rgba(239, 68, 68, 0.15);
+                    color: #ef4444;
+                }
+
+                .sentiment-badge.neutral {
+                    background: rgba(156, 163, 175, 0.15);
+                    color: #9ca3af;
+                }
+
+                .news-impact-analysis {
+                    background: rgba(0, 0, 0, 0.2);
+                    border-radius: 4px;
+                    padding: 8px;
+                    font-size: 10px;
+                }
+
+                .news-impact-analysis .impact-mechanism {
+                    color: #bbb;
+                    margin-bottom: 6px;
+                    line-height: 1.4;
+                }
+
+                .news-impact-analysis .impact-quote {
+                    color: #888;
+                    font-style: italic;
+                    padding-left: 8px;
+                    border-left: 2px solid rgba(59, 130, 246, 0.3);
+                    margin: 6px 0;
+                    line-height: 1.4;
+                }
+
+                .news-impact-analysis .impact-prediction {
+                    color: #ddd;
+                    font-weight: 600;
+                    margin-top: 6px;
+                }
+
             `}</style>
         </div>
     );
