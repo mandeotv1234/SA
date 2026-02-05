@@ -1,5 +1,7 @@
 
+import os
 import logging
+import time
 import torch
 import numpy as np
 import pandas as pd
@@ -501,6 +503,30 @@ class InferenceEngine:
         prob_value = pred_1h['direction'].item()
         pred_return_val = pred_1h['return'].item() # Scalar % change
         
+        # ============ DEBUG: RAW MODEL OUTPUT ============
+        pred_24h_direction = pred_24h['direction'].item()
+        pred_24h_return = pred_24h['return'].item()
+        pred_1h_confidence = pred_1h['confidence'].item()
+        pred_24h_confidence = pred_24h['confidence'].item()
+        
+        logger.info(f"")
+        logger.info(f"  ╔══════════════════════════════════════════════════════════════════╗")
+        logger.info(f"  ║  🔬 DEBUG: RAW MODEL OUTPUT FOR {symbol:^20}  ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  📊 1H PREDICTION (from model.head_1h):                          ║")
+        logger.info(f"  ║     • Direction Prob: {prob_value:.6f} ({'UP' if prob_value > 0.5 else 'DOWN'})         ║")
+        logger.info(f"  ║     • Return (raw):   {pred_return_val:+.6f} ({pred_return_val*100:+.2f}%)                   ║")
+        logger.info(f"  ║     • Confidence:     {pred_1h_confidence:.6f}                              ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  📊 24H PREDICTION (from model.head_24h):                        ║")
+        logger.info(f"  ║     • Direction Prob: {pred_24h_direction:.6f} ({'UP' if pred_24h_direction > 0.5 else 'DOWN'})         ║")
+        logger.info(f"  ║     • Return (raw):   {pred_24h_return:+.6f} ({pred_24h_return*100:+.2f}%)                   ║")
+        logger.info(f"  ║     • Confidence:     {pred_24h_confidence:.6f}                              ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  🎲 VOLATILITY PROBS: LOW={volatility_probs[0,0]:.3f} MED={volatility_probs[0,1]:.3f} HIGH={volatility_probs[0,2]:.3f} ║")
+        logger.info(f"  ╚══════════════════════════════════════════════════════════════════╝")
+        # ============ END DEBUG ============
+        
         # 6. Interpret Attention & News
         # 6. Interpret Attention & News
         attn_weights_tensor = attn_weights['news_temporal'].squeeze().cpu().numpy()
@@ -563,6 +589,8 @@ class InferenceEngine:
         # If model is trained, use its output. Otherwise, use probability-based fallback
         
         # Check if model output seems reasonable (not too extreme)
+        using_model_prediction = False  # DEBUG flag
+        
         if abs(pred_return_val) > 0.5:  # Model predicting >50% change - likely untrained
             # Fallback: Use probability + sentiment for realistic prediction
             prob_strength = abs(prob_value - 0.5) * 2  # 0 to 1
@@ -581,13 +609,26 @@ class InferenceEngine:
                 move_percent_1h *= 1.3
             elif volatility_label == "LOW":
                 move_percent_1h *= 0.7
+            
+            # DEBUG LOG
+            logger.warning(f"  ⚠️  [DEBUG] MODEL UNTRAINED! abs(pred_return)={abs(pred_return_val):.4f} > 0.5")
+            logger.warning(f"  ⚠️  [DEBUG] USING FALLBACK (probability-based): {move_percent_1h*100:+.2f}%")
         else:
             # Model seems trained, use its output with confidence scaling
+            using_model_prediction = True
             confidence_factor = 0.3 + abs(prob_value - 0.5) * 1.4
             move_percent_1h = pred_return_val * confidence_factor
+            
+            # DEBUG LOG
+            logger.info(f"  ✅ [DEBUG] MODEL TRAINED! Using model prediction")
+            logger.info(f"  ✅ [DEBUG] pred_return_val={pred_return_val:.6f}, confidence_factor={confidence_factor:.4f}")
+            logger.info(f"  ✅ [DEBUG] move_percent_1h = {pred_return_val:.6f} × {confidence_factor:.4f} = {move_percent_1h:.6f} ({move_percent_1h*100:+.2f}%)")
         
         # Safety bounds
+        move_percent_1h_before_clamp = move_percent_1h
         move_percent_1h = max(-0.03, min(0.03, move_percent_1h))
+        if move_percent_1h != move_percent_1h_before_clamp:
+            logger.info(f"  📎 [DEBUG] Clamped 1H: {move_percent_1h_before_clamp*100:+.2f}% → {move_percent_1h*100:+.2f}%")
         
         
         target_price_1h = current_price * (1 + move_percent_1h)
@@ -612,9 +653,10 @@ class InferenceEngine:
         
         
 
-        # Long Term (24h) - SPECIFIC PRICE, NOT RANGE
-        # 24h should amplify 1h trend but with more uncertainty
-        direction_24h = direction_1h
+        # Long Term (24h) - AMPLIFY FROM 1H PREDICTION
+        # Using 1h prediction amplified, as model 24h head may not be well-calibrated
+        
+        using_model_24h_prediction = False  # Always using amplified 1h for now
         
         # Calculate 24h move (typically 2-4x the 1h move, but capped at ±8%)
         if direction_1h == "SIDEWAYS":
@@ -635,12 +677,36 @@ class InferenceEngine:
             else:
                 direction_24h = "DOWN"
         
+        # DEBUG LOG
+        logger.info(f"  📈 [DEBUG] 24H = 1H × 3.5: {move_percent_1h*100:+.2f}% × 3.5 = {move_percent_24h*100:+.2f}%")
+        
         target_price_24h = current_price * (1 + move_percent_24h)
         
         # For display purposes, also calculate a range (±20% of the move)
         range_margin = abs(move_percent_24h) * 0.2
         range_low = current_price * (1 + move_percent_24h - range_margin)
         range_high = current_price * (1 + move_percent_24h + range_margin)
+        
+        # ============ DEBUG: FINAL PREDICTION SUMMARY ============
+        logger.info(f"")
+        logger.info(f"  ╔══════════════════════════════════════════════════════════════════╗")
+        logger.info(f"  ║  🎯 FINAL PREDICTION SUMMARY FOR {symbol:^20}    ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  💰 Current Price: ${current_price:,.2f}                               ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  ⏱️  1H FORECAST:                                                  ║")
+        logger.info(f"  ║     • Direction: {direction_1h:<10}                                   ║")
+        logger.info(f"  ║     • Target:    ${target_price_1h:,.2f} ({move_percent_1h*100:+.2f}%)                       ║")
+        logger.info(f"  ║     • Source:    {'🧠 MODEL' if using_model_prediction else '📊 FALLBACK (prob-based)'}                   ║")
+        logger.info(f"  ╠══════════════════════════════════════════════════════════════════╣")
+        logger.info(f"  ║  📅 24H FORECAST:                                                 ║")
+        logger.info(f"  ║     • Direction: {direction_24h:<10}                                   ║")
+        logger.info(f"  ║     • Target:    ${target_price_24h:,.2f} ({move_percent_24h*100:+.2f}%)                      ║")
+        logger.info(f"  ║     • Range:     ${range_low:,.2f} - ${range_high:,.2f}                   ║")
+        logger.info(f"  ║     • Source:    {'🧠 24H MODEL' if using_model_24h_prediction else '📊 FALLBACK (amplified from 1H)'}         ║")
+        logger.info(f"  ╚══════════════════════════════════════════════════════════════════╝")
+        logger.info(f"")
+        # ============ END DEBUG SUMMARY ============
 
         # 8. Generate True Causal Explanation
         dl_stats = {
@@ -653,26 +719,42 @@ class InferenceEngine:
         # Add current_price to tech_indicators for recommendation
         tech_indicators['close'] = current_price
 
-
-        # Generate unified causal explanation (includes both news and technical analysis)
-        causal_analysis = self.generate_unified_explanation(
-            symbol=symbol,
-            direction=direction_1h,
-            dl_stats=dl_stats,
-            tech_indicators=tech_indicators,
-            top_news_item=top_news_item,
-            all_news=top_sources,
-            driver_type=driver_type,
-            attention_score=float(top_prob)
-        )
-
         # NEW: Advanced news impact analysis (FinBERT + LLM)
+        # MUST be called BEFORE generate_unified_explanation so we can pass articles to Gemini
         news_impact_result = self.analyze_news_impact_for_coin(
             symbol=symbol,
             news_df=news_df if not news_df.empty else None,
             candles_df=candles_df,
             direction=direction_1h,
             predicted_return=move_percent_1h * 100
+        )
+
+        # Generate unified causal explanation (includes both news and technical analysis)
+        # IMPORTANT: Always pass news articles to Gemini, even if driver is TECHNICAL
+        # This allows Gemini to cite actual news articles instead of generic "no news" messages
+        
+        # Build top_sources from news_impact_analysis (which has top 3 articles with LLM analysis)
+        news_for_gemini = []
+        if news_impact_result and 'top_articles' in news_impact_result:
+            for article in news_impact_result['top_articles'][:3]:
+                news_for_gemini.append({
+                    "title": article.get('title', 'N/A'),
+                    "source": article.get('source', 'Unknown'),
+                    "content": article.get('llm_analysis', {}).get('summary', ''),
+                    "sentiment_score": article.get('sentiment_score', 0),
+                    "attention_score": article.get('semantic_relevance_score', 0),
+                    "impact": article.get('llm_analysis', {}).get('predicted_impact', 'N/A')
+                })
+        
+        causal_analysis = self.generate_unified_explanation(
+            symbol=symbol,
+            direction=direction_1h,
+            dl_stats=dl_stats,
+            tech_indicators=tech_indicators,
+            top_news_item=top_news_item,
+            all_news=news_for_gemini,  # Always pass news, even if driver is TECHNICAL
+            driver_type=driver_type,
+            attention_score=float(top_prob)
         )
 
         return {
@@ -774,72 +856,50 @@ class InferenceEngine:
 📰 TIN TỨC: Không có tin tức đáng kể trong 5 giờ qua. Biến động giá chủ yếu do technical factors.
 """
         
-        # Build unified prompt
-        prompt = f"""
-🎯 ROLE: Bạn là Senior Crypto Market Analyst với chuyên môn về cả Technical Analysis và News Impact.
+        # Build unified prompt - SIMPLIFIED for smaller models
+        prompt = f"""BẠN LÀ CHUYÊN GIA PHÂN TÍCH CRYPTO. TRẢ LỜI HOÀN TOÀN BẰNG TIẾNG VIỆT.
 
-📊 NHIỆM VỤ: Phân tích và giải thích dự báo giá cho {symbol}.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📈 KẾT QUẢ DỰ BÁO TỪ DEEP LEARNING MODEL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔮 DỰ BÁO 1 GIỜ TỚI:
-   • Xu hướng: {direction}
-   • Mục tiêu giá: {dl_stats['predicted_return']:+.2f}%
-   • Xác suất: {dl_stats['probability']:.3f}
-   • Độ tin cậy: {dl_stats['confidence']:.1f}%
-   • Volatility: {dl_stats['volatility']}
-
-📊 CHỈ SỐ KỸ THUẬT HIỆN TẠI:
-   • Giá hiện tại: ${current_price:,.2f}
-   • RSI(14): {rsi:.2f} → {"Quá mua" if rsi > 70 else "Quá bán" if rsi < 30 else "Trung lập"}
-   • MACD: {macd:.4f} → {"Tích cực" if macd > 0 else "Tiêu cực"}
-   • Bollinger Bands: [{bb_low:.2f} - {bb_high:.2f}]
+DỮ LIỆU ĐẦU VÀO:
+- Coin: {symbol}
+- Giá hiện tại: ${current_price:,.2f}
+- Dự báo: {direction} {dl_stats['predicted_return']:+.2f}%
+- Độ tin cậy: {dl_stats['confidence']:.1f}%
+- RSI: {rsi:.2f} ({"Quá mua" if rsi > 70 else "Quá bán" if rsi < 30 else "Trung lập"})
+- MACD: {macd:.4f} ({"Tích cực" if macd > 0 else "Tiêu cực"})
+- Bollinger: ${bb_low:.2f} - ${bb_high:.2f}
 
 {news_section}
 
-🎯 PRIMARY DRIVER: {driver_type}
-   → Model đã phân tích và xác định yếu tố chính ảnh hưởng đến giá là: {"Tin tức" if driver_type == "NEWS" else "Technical patterns"}
+NHIỆM VỤ: Viết giải thích BẰNG TIẾNG VIỆT kết hợp:
+1. Phân tích kỹ thuật: RSI, MACD, Bollinger Bands cho thấy gì?
+2. Tác động tin tức: Các tin trên ảnh hưởng thế nào đến giá?
+3. Kết luận: Tại sao giá sẽ {direction.lower()} {dl_stats['predicted_return']:+.2f}%?
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 YÊU CẦU ĐẦU RA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Trả về JSON thuần (KHÔNG có markdown):
+TRẢ VỀ JSON (KHÔNG CÓ MARKDOWN):
 {{
     "primary_driver": "{driver_type}_CATALYST",
-    "key_event": "Tóm tắt ngắn gọn sự kiện/pattern chính",
-    "news_citations": ["Trích dẫn nguyên văn câu quan trọng từ tin tức (nếu có)"],
-    "explanation_vi": "Giải thích chi tiết 6-8 câu bằng tiếng Việt. Câu 1: Dự báo {direction} {dl_stats['predicted_return']:+.2f}% dựa trên [primary driver]. Câu 2-3: NẾU CÓ TIN TỨC (kể cả khi driver=TECHNICAL) - Phân tích tác động của top 3 tin: Tin nào hỗ trợ/đối lập với dự báo? Trích dẫn câu quan trọng. Tin có sentiment như thế nào? Câu 4-5: Phân tích technical indicators (RSI={rsi:.1f}, MACD={macd:.4f}, BB) và ý nghĩa. Câu 6: Giải thích cơ chế nhân quả (Driver → Tâm lý → Order flow → Giá). Câu 7: Độ tin cậy {dl_stats['confidence']:.1f}% và lý do. Câu 8: Rủi ro cụ thể và điều kiện thị trường.",
+    "key_event": "Sự kiện/pattern chính bằng tiếng Việt",
+    "news_citations": ["Trích dẫn tin tức quan trọng"],
+    "explanation_vi": "Viết 4-6 câu tiếng Việt. Câu 1: Dự báo giá {symbol} sẽ {direction.lower()} khoảng {dl_stats['predicted_return']:+.2f}%. Câu 2: Phân tích RSI={rsi:.1f} và MACD={macd:.4f} cho thấy gì. Câu 3: Tác động từ tin tức (nếu có). Câu 4: Kết luận và rủi ro.",
     "causal_chain": {{
-        "cause": "Nguyên nhân chính (tin tức hoặc technical pattern)",
-        "mechanism": "Cơ chế tác động (FOMO/Liquidation/Breakout/Support)",
-        "effect": "Kết quả dự kiến: Giá {direction.lower()} {dl_stats['predicted_return']:+.2f}%"
+        "cause": "Nguyên nhân chính bằng tiếng Việt",
+        "mechanism": "Cơ chế tác động bằng tiếng Việt",
+        "effect": "Kết quả: giá {direction.lower()} {dl_stats['predicted_return']:+.2f}%"
     }},
     "sentiment_impact": {{
         "news_sentiment": {sentiment_score if top_news_item else 0.0},
         "social_volume": "{"HIGH" if driver_type == "NEWS" else "LOW"}"
     }},
-    "actionable_advice": "Lời khuyên giao dịch cụ thể. VD: Entry: $X-$Y. Stop-loss: $Z. Take-profit: $A (R/R ratio). Lưu ý điều kiện thị trường."
+    "actionable_advice": "Entry: ${current_price:,.0f}. Stop-loss: ${current_price * 0.97:,.0f}. Take-profit: ${current_price * (1 + abs(dl_stats['predicted_return'])/100):,.0f}."
 }}
 
-⚠️ QUAN TRỌNG - BẮT BUỘC:
-1. **Phân tích tin tức (NẾU CÓ):**
-   - Dù PRIMARY DRIVER là gì, NẾU có tin tức thì PHẢI phân tích tác động
-   - Trích dẫn NGUYÊN VĂN ít nhất 1 câu từ tin vào news_citations
-   - Đánh giá: Tin hỗ trợ hay đối lập với dự báo? Sentiment như thế nào?
-   
-2. **Phân tích technical (LUÔN LUÔN):**
-   - Giải thích Ý NGHĨA của các chỉ số, không chỉ liệt kê
-   - Cơ chế nhân quả: Driver → Tâm lý → Order flow → Giá
-   
-3. **Bắt buộc có số liệu cụ thể:**
-   - RSI={rsi:.1f}, MACD={macd:.4f}, Prediction={dl_stats['predicted_return']:+.2f}%
-   - Actionable advice phải có giá Entry, SL, TP cụ thể
-"""
+⚠️ BẮT BUỘC:
+- explanation_vi PHẢI BẰNG TIẾNG VIỆT 100%
+- PHẢI kết hợp phân tích KỸ THUẬT + TIN TỨC
+- KHÔNG dùng tiếng Anh trong explanation_vi"""
         
-        return self._call_gemini(prompt)
+        # Require primary_driver and explanation_vi for main prediction
+        return self._call_gemini(prompt, required_fields=['primary_driver', 'explanation_vi'])
 
     # Legacy methods - kept for reference but not used
     def generate_news_explanation(self, symbol, direction, top_news_item, tech_inds, dl_stats, other_news):
@@ -1028,7 +1088,7 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
 - Giải thích TẠI SAO tin này gây ra biến động giá, không chỉ MÔ TẢ.
 """
         
-        return self._call_gemini(prompt)
+        return self._call_gemini(prompt, required_fields=['primary_driver', 'explanation_vi'])
 
     def generate_technical_explanation(self, symbol, direction, dl_stats, attn_score, tech_inds, other_news):
         """
@@ -1158,14 +1218,24 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
 - Nếu có xung đột giữa các chỉ số (VD: RSI tăng nhưng MACD giảm), phải giải thích yếu tố nào quan trọng hơn.
 """
         
-        return self._call_gemini(prompt)
+        return self._call_gemini(prompt, required_fields=['primary_driver', 'explanation_vi'])
 
-    def _call_gemini(self, prompt, max_retries=2):
+    def _call_gemini(self, prompt, max_retries=2, required_fields=None):
         """
         Call Gemini API with retry logic and smart fallback.
+        
+        Args:
+            prompt: The prompt to send to Gemini
+            max_retries: Number of retry attempts
+            required_fields: Optional list of required field names. If None, returns any valid JSON.
+                           If specified, will only return if all fields are present.
         """
         import json
         import re
+        
+        # Default required fields for explanation prompts
+        if required_fields is None:
+            required_fields = []  # Don't require any fields by default - let caller validate
         
         for attempt in range(max_retries):
             try:
@@ -1178,9 +1248,21 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
                         # Clean up response
                         clean_json = response.strip()
                         
-                        # Remove markdown code blocks
+                        # Remove markdown code blocks (improved regex)
+                        # Handle ```json, ```JSON, ``` at start
+                        if clean_json.startswith('```'):
+                            # Find the end of first line (```json or ```)
+                            first_newline = clean_json.find('\n')
+                            if first_newline > 0:
+                                clean_json = clean_json[first_newline+1:]
+                            # Remove trailing ```
+                            if clean_json.rstrip().endswith('```'):
+                                clean_json = clean_json.rstrip()[:-3].rstrip()
+                        
+                        # Fallback: Use regex if still has markdown
                         clean_json = re.sub(r'```json\s*', '', clean_json)
-                        clean_json = re.sub(r'```\s*', '', clean_json)
+                        clean_json = re.sub(r'```\s*$', '', clean_json)
+                        clean_json = clean_json.strip()
                         
                         # Remove any leading/trailing text before/after JSON
                         json_match = re.search(r'\{[\s\S]*\}', clean_json)
@@ -1192,31 +1274,63 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
                         clean_json = clean_json.replace('"', '"').replace('"', '"')
                         clean_json = clean_json.replace(''', "'").replace(''', "'")
                         
-                        # 2. Fix newlines in strings (escape them)
-                        # This is tricky - we need to be careful not to break valid JSON
+                        # 2. Fix control characters in strings
+                        # Replace actual newlines/tabs inside JSON strings
+                        clean_json = re.sub(r'(?<=": ")([^"]*?)(?=")', 
+                                          lambda m: m.group(1).replace('\n', ' ').replace('\r', ' ').replace('\t', ' '),
+                                          clean_json)
                         
                         try:
                             parsed = json.loads(clean_json)
-                            # Validate required fields
-                            if parsed.get('primary_driver') and parsed.get('explanation_vi'):
+                            
+                            # Log what we got for debugging
+                            logger.info(f"[GEMINI] Parsed keys: {list(parsed.keys())}")
+                            
+                            # If no required fields specified, return any valid JSON
+                            if not required_fields:
                                 logger.info(f"[GEMINI] ✓ Successfully parsed JSON with {len(str(parsed))} chars")
                                 return parsed
+                            
+                            # Check required fields
+                            missing = [f for f in required_fields if not parsed.get(f)]
+                            
+                            if not missing:
+                                logger.info(f"[GEMINI] ✓ Successfully parsed JSON with all required fields")
+                                return parsed
                             else:
-                                logger.warning(f"[GEMINI] Missing required fields: primary_driver or explanation_vi")
+                                logger.warning(f"[GEMINI] Missing required fields: {missing}")
+                                
+                                # Try to fill in missing fields with alternatives
+                                if 'explanation_vi' in missing:
+                                    alt = parsed.get('explanation') or parsed.get('summary') or parsed.get('analysis')
+                                    if alt:
+                                        parsed['explanation_vi'] = alt
+                                        missing.remove('explanation_vi')
+                                        
+                                if 'primary_driver' in missing:
+                                    parsed['primary_driver'] = 'TECHNICAL_ANALYSIS'
+                                    missing.remove('primary_driver')
+                                
+                                if not missing:
+                                    logger.info(f"[GEMINI] ✓ Filled missing fields with alternatives")
+                                    return parsed
+                                        
                         except json.JSONDecodeError as e:
                             logger.warning(f"[GEMINI] JSON parse attempt {attempt+1} failed: {e}")
-                            logger.warning(f"[GEMINI] Response preview: {clean_json[:500]}")
+                            logger.warning(f"[GEMINI] Response preview: {clean_json[:300]}...")
                             
-                            # Try to fix and retry once more
+                            # Try to fix common JSON issues
                             if attempt == 0:
-                                # Try to fix unterminated strings by escaping newlines
                                 try:
-                                    # Find all string values and escape newlines
-                                    fixed_json = re.sub(r':\s*"([^"]*)"', lambda m: f': "{m.group(1).replace(chr(10), " ")}"', clean_json)
+                                    # More aggressive fix: remove all control characters
+                                    fixed_json = ''.join(c if c >= ' ' or c in '\n\t' else ' ' for c in clean_json)
+                                    # Replace actual newlines in string values
+                                    fixed_json = re.sub(r':\s*"([^"]*)"', 
+                                                       lambda m: f': "{m.group(1).replace(chr(10), " ").replace(chr(13), " ")}"', 
+                                                       fixed_json)
                                     parsed = json.loads(fixed_json)
-                                    if parsed.get('primary_driver') and parsed.get('explanation_vi'):
-                                        logger.info(f"[GEMINI] ✓ Fixed and parsed JSON")
-                                        return parsed
+                                    logger.info(f"[GEMINI] ✓ Fixed JSON with control char removal")
+                                    return parsed
                                 except:
                                     pass
                             continue
@@ -1291,7 +1405,7 @@ Trả về JSON thuần (KHÔNG có markdown ```json):
         """
         coin_name = symbol.replace('USDT', '')
         title = article.get('title', 'Unknown')
-        content = article.get('text', article.get('content', ''))[:2000]  # Limit content length
+        content = article.get('text', article.get('content', ''))
         source = article.get('source', 'Unknown')
         sentiment = article.get('sentiment_score', article.get('sentiment', 0))
         
@@ -1417,21 +1531,51 @@ Trả về JSON (KHÔNG có markdown):
         articles_with_scores.sort(key=lambda x: x['combined_score'], reverse=True)
         top_3_articles = articles_with_scores[:3]
         
-        # Step 2: Deep LLM analysis for top 3 articles
+        # Step 2: Prepare article analysis
+        # NOTE: To avoid Gemini rate limit (30 req/min for gemma-3-1b-it),
+        # we skip individual LLM calls and use sentiment-based analysis instead.
+        # The main explanation in generate_unified_explanation already uses Gemini.
         detailed_analyses = []
         
-        for item in top_3_articles:
+        skip_llm_per_article = os.getenv('SKIP_LLM_PER_ARTICLE', 'true').lower() == 'true'
+        
+        for idx, item in enumerate(top_3_articles, 1):
             row = item['row']
             semantic_score = item['semantic_score']
             has_direct_mention = item['has_direct_mention']
             
-            # Call LLM for deep analysis
-            llm_analysis = self.analyze_article_with_llm(
-                article=row.to_dict(),
-                symbol=symbol,
-                direction=direction,
-                predicted_return=predicted_return
-            )
+            if skip_llm_per_article:
+                # Use simple sentiment-based analysis to save API calls
+                sentiment = row.get('sentiment_score', row.get('sentiment', 0))
+                llm_analysis = {
+                    "summary": row.get('title', 'Unknown'),
+                    "is_relevant": has_direct_mention or semantic_score > 0.4,
+                    "relevance_reason": "Direct mention" if has_direct_mention else "Semantic similarity",
+                    "impact_mechanism": "News sentiment affects market psychology",
+                    "key_quote": row.get('title', 'N/A'),
+                    "predicted_impact": "TĂNG NHẸ" if sentiment > 0.2 else ("GIẢM NHẸ" if sentiment < -0.2 else "KHÔNG ẢNH HƯỞNG"),
+                    "confidence": "TRUNG BÌNH",
+                    "time_effect": "NGẮN HẠN (1-4h)"
+                }
+            else:
+                # Call LLM for deep analysis (uses extra API quota)
+                logger.info(f"📰 [LLM ANALYSIS {idx}/3] Analyzing article: {row.get('title', 'Unknown')[:60]}...")
+                
+                llm_analysis = self.analyze_article_with_llm(
+                    article=row.to_dict(),
+                    symbol=symbol,
+                    direction=direction,
+                    predicted_return=predicted_return
+                )
+                
+                logger.info(f"✅ [LLM ANALYSIS {idx}/3] Completed. Impact: {llm_analysis.get('predicted_impact', 'N/A')}")
+                
+                # Add 30-second delay between API calls to avoid rate limit
+                # Gemini free tier: 30 requests/min for gemma-3-1b-it
+                if idx < len(top_3_articles):  # Don't delay after the last article
+                    logger.info(f"⏳ [RATE LIMIT] Waiting 30 seconds before next API call to avoid quota exhaustion...")
+                    time.sleep(30)
+                    logger.info(f"✓ [RATE LIMIT] Delay complete. Proceeding to article {idx + 1}/3")
             
             detailed_analyses.append({
                 "title": row.get('title', 'Unknown'),
