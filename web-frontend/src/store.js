@@ -182,14 +182,48 @@ const useStore = create((set, get) => ({
       console.log('[Store] SSE Connected');
     };
 
-    eventSource.addEventListener('vip_update', (e) => {
+    eventSource.addEventListener('vip_update', async (e) => {
       try {
         const data = JSON.parse(e.data);
         console.log('[Store] Received VIP Update via SSE:', data);
 
         if (data && data.isVip) {
-          set({ isVip: true });
-          localStorage.setItem('isVip', 'true');
+          // IMPORTANT: Fetch fresh token with updated VIP claim
+          // This ensures middleware can validate VIP status immediately
+          try {
+            const meResponse = await fetch(`${AUTH_BASE}/me`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${get().token}`
+              },
+              credentials: 'include'
+            });
+
+            if (meResponse.ok) {
+              const meData = await meResponse.json();
+
+              // Update token with fresh one containing is_vip claim
+              if (meData.token) {
+                localStorage.setItem('token', meData.token);
+                const user = get().decodeUser(meData.token);
+                set({ token: meData.token, isVip: true, user });
+                console.log('[Store] Token refreshed with VIP claim');
+              } else {
+                // Fallback: just update isVip flag
+                set({ isVip: true });
+                localStorage.setItem('isVip', 'true');
+              }
+            } else {
+              // Fallback: just update isVip flag
+              set({ isVip: true });
+              localStorage.setItem('isVip', 'true');
+            }
+          } catch (fetchErr) {
+            console.error('[Store] Failed to refresh token after VIP upgrade:', fetchErr);
+            // Fallback: just update isVip flag
+            set({ isVip: true });
+            localStorage.setItem('isVip', 'true');
+          }
 
           // Dispatch event to notify UI
           window.dispatchEvent(new CustomEvent('vip_upgraded'));
