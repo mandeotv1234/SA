@@ -144,8 +144,8 @@ def run_scheduled_prediction() -> Dict:
     
     predictions = []
     
-    for symbol in ALL_SYMBOLS:
-        print(f"  [LOOP-DEBUG] Processing {symbol}...")
+    for idx, symbol in enumerate(ALL_SYMBOLS):
+        print(f"  [LOOP-DEBUG] Processing {symbol}... ({idx+1}/{len(ALL_SYMBOLS)})")
         try:
             # Run Deep Learning Inference
             pred = _inference_engine.predict_for_symbol(symbol, news_list)
@@ -157,11 +157,25 @@ def run_scheduled_prediction() -> Dict:
                 forecast_1h = pred.get('forecast', {}).get('next_1h', {})
                 direction = forecast_1h.get('direction', 'SIDEWAYS')
                 confidence = forecast_1h.get('confidence', 0)
-                reason_short = pred.get('causal_analysis', {}).get('explanation_vi', '')[:100]
+                causal_analysis = pred.get('causal_analysis', {})
+                reason_short = causal_analysis.get('explanation_vi', '')[:100]
                 
                 icon = '🚀' if direction == 'UP' else ('📉' if direction == 'DOWN' else '➡️')
                 print(f"  {icon} {symbol}: {direction} (Conf: {confidence}%)")
                 print(f"     Causal: {reason_short}...")
+                
+                # 🔍 DEBUG: Show full Gemini analysis
+                print(f"\n  📰 [GEMINI ANALYSIS] Full Response:")
+                print(f"     Primary Driver: {causal_analysis.get('primary_driver', 'N/A')}")
+                print(f"     Key Event: {causal_analysis.get('key_event', 'N/A')}")
+                news_citations = causal_analysis.get('news_citations', [])
+                if news_citations:
+                    print(f"     News Citations ({len(news_citations)}):")
+                    for i, citation in enumerate(news_citations[:3], 1):
+                        print(f"       {i}. {citation[:150]}...")
+                else:
+                    print(f"     News Citations: NONE")
+                print(f"     Full Explanation: {causal_analysis.get('explanation_vi', 'N/A')[:300]}...\n")
                 
                 # 🔥 PUBLISH IMMEDIATELY after processing each symbol
                 try:
@@ -181,6 +195,13 @@ def run_scheduled_prediction() -> Dict:
                     print(f"  [KAFKA ERROR] Failed to publish {symbol}: {e}")
             else:
                 print(f"  [WARN] Skipping {symbol} - insufficient data")
+            
+            # 🕐 RATE LIMIT PROTECTION: Wait between predictions to avoid Gemini quota
+            # gemma-3-1b-it has limit of ~30 requests/minute
+            if idx < len(ALL_SYMBOLS) - 1:  # Don't wait after the last symbol
+                delay_sec = int(os.getenv('PREDICTION_DELAY_SEC', '60'))
+                print(f"  [RATE-LIMIT] Waiting {delay_sec}s before next prediction to avoid quota...")
+                time.sleep(delay_sec)
                 
         except Exception as e:
             print(f"  [ERROR] Failed for {symbol}: {e}")
@@ -229,10 +250,26 @@ def _scheduler_loop():
     """Background scheduler that runs prediction every PREDICTION_INTERVAL_SEC."""
     global _scheduler_running
     
-    print(f"[SCHEDULER] Started - DL prediction every {PREDICTION_INTERVAL_SEC}s")
-    print(f"[SCHEDULER] First run in 30 seconds...")
+    # Wait longer on startup to allow news buffer to fill
+    INITIAL_DELAY_SEC = int(os.getenv("INITIAL_DELAY_SEC", "30"))  # Default 90 seconds
     
-    time.sleep(5)
+    print(f"[SCHEDULER] Started - DL prediction every {PREDICTION_INTERVAL_SEC}s")
+    print(f"[SCHEDULER] ⏳ Waiting {INITIAL_DELAY_SEC}s for news buffer to fill...")
+    
+    # Show countdown every 15 seconds
+    elapsed = 0
+    while elapsed < INITIAL_DELAY_SEC and _scheduler_running:
+        time.sleep(15)
+        elapsed += 15
+        with _buffer_lock:
+            current_buffer_size = len(_news_buffer)
+        remaining = INITIAL_DELAY_SEC - elapsed
+        if remaining > 0:
+            print(f"[SCHEDULER] ⏳ {remaining}s remaining... (Buffer: {current_buffer_size} articles)")
+        else:
+            print(f"[SCHEDULER] ✅ Initial delay complete. Buffer has {current_buffer_size} articles.")
+    
+    print(f"[SCHEDULER] 🚀 Starting prediction loop...")
     
     while _scheduler_running:
         try:

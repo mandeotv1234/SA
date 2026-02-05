@@ -2,10 +2,17 @@
 import logging
 import math
 from app.modules.news_aggregator import get_last_result
-from app.modules.ollama_client import OllamaClient
+from app.modules.gemini_client import GeminiClient
 
 logger = logging.getLogger(__name__)
-ollama = OllamaClient()
+
+# Initialize Gemini client (replaces Ollama)
+try:
+    gemini = GeminiClient()
+    logger.info("[INVESTMENT-ADVISOR] GeminiClient initialized successfully")
+except Exception as e:
+    logger.warning(f"[INVESTMENT-ADVISOR] Failed to initialize GeminiClient: {e}")
+    gemini = None
 
 def analyze_investment(payload: dict):
     """
@@ -81,7 +88,7 @@ def analyze_investment(payload: dict):
         predicted_profit_usdt = (amount / buy_price) * (predicted_price - buy_price)
         predicted_profit_percent = ((predicted_price - buy_price) / buy_price) * 100
         
-        # Generate Advice via Ollama
+        # Generate Advice via Gemini (replaced Ollama)
         direction = next_1h.get('direction', 'NEUTRAL')
         confidence = next_1h.get('confidence', 0)
         
@@ -103,11 +110,17 @@ def analyze_investment(payload: dict):
         """
         
         try:
-            ollama_res = ollama.generate(prompt)
-            advice = ollama.extract_response(ollama_res)
-            # Remove markdown if any
-            advice = advice.replace('```', '').strip()
-        except Exception:
+            if gemini:
+                gemini_res = gemini.generate(prompt)
+                advice = gemini.extract_response(gemini_res)
+                # Remove markdown if any
+                advice = advice.replace('```', '').strip()
+                logger.info(f"[INVESTMENT-ADVISOR] Gemini generated advice for {symbol}")
+            else:
+                # Fallback if Gemini not initialized
+                advice = f"Dự báo xu hướng {direction}. Lợi nhuận ước tính {predicted_profit_percent:.2f}%."
+        except Exception as e:
+            logger.warning(f"[INVESTMENT-ADVISOR] Gemini call failed: {e}")
             advice = f"Dự báo xu hướng {direction}. Lợi nhuận ước tính {predicted_profit_percent:.2f}%."
 
         return {
@@ -129,3 +142,4 @@ def analyze_investment(payload: dict):
             "predicted_price": 0,
             "predicted_profit_usdt": 0
         }
+
