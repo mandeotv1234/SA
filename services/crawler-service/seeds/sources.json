@@ -133,25 +133,5 @@
         "url": "https://kinhtechungkhoan.vn/",
         "type": "html",
         "category": "VietnamFinance"
-    },
-    {
-        "url": "https://news.google.com/rss/search?q=bitcoin+when:1d&hl=en-US&gl=US&ceid=US:en",
-        "type": "rss",
-        "category": "Aggregator"
-    },
-    {
-        "url": "https://news.google.com/rss/search?q=cryptocurrency+when:1d&hl=en-US&gl=US&ceid=US:en",
-        "type": "rss",
-        "category": "Aggregator"
-    },
-    {
-        "url": "https://news.google.com/rss/search?q=tien+ao+when:1d&hl=vi-VN&gl=VN&ceid=VN:vi",
-        "type": "rss",
-        "category": "Aggregator"
-    },
-    {
-        "url": "https://news.google.com/rss/search?q=bitcoin+when:1d&hl=vi-VN&gl=VN&ceid=VN:vi",
-        "type": "rss",
-        "category": "Aggregator"
     }
 ]

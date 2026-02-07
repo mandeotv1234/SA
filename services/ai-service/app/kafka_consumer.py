@@ -32,7 +32,7 @@ TOPICS.append("investment.analysis.request")
 consumer_conf = {
     "bootstrap.servers": KAFKA_BROKER,
     "group.id": GROUP,
-    "auto.offset.reset": "latest"  # Only consume NEW messages, skip historical data
+    "auto.offset.reset": "earliest"  # Consume from beginning to catch all news
 }
 
 
@@ -111,12 +111,26 @@ def start_consumer():
                 short_text = f"{title}\n\n{content[:500]}"
                 
                 crawler_sentiment = j.get("sentiment")
-                if crawler_sentiment:
-                    label = crawler_sentiment
-                    score = 0.9 if label.lower() == 'positive' else (-0.9 if label.lower() == 'negative' else 0.0)
-                else:
-                    sentiment = analyze_sentiment_text(short_text)
+                # DEBUG LOG
+                print(f"[DEBUG-SENTIMENT] Crawler sent: {crawler_sentiment} (type: {type(crawler_sentiment)})")
+
+                if crawler_sentiment is not None:
+                    # Check if it's a number (float/int) or a numeric string
                     try:
+                        score = float(crawler_sentiment)
+                        if score > 0.05:
+                            label = "Positive"
+                        elif score < -0.05:
+                            label = "Negative"
+                        else:
+                            label = "Neutral"
+                    except (ValueError, TypeError):
+                        # Handle string label
+                        label = str(crawler_sentiment)
+                        score = 0.9 if label.lower() == 'positive' else (-0.9 if label.lower() == 'negative' else 0.0)
+                else:
+                    try:
+                        sentiment = analyze_sentiment_text(short_text)
                         if isinstance(sentiment, dict):
                             label = max(sentiment.items(), key=lambda x: x[1])[0]
                             score = float(sentiment.get(label, 0.0))
@@ -126,6 +140,8 @@ def start_consumer():
                     except Exception:
                         label = "Neutral"
                         score = 0.0
+                
+                print(f"[DEBUG-SENTIMENT] Calculated: Label={label}, Score={score}")
                 
                 j['sentiment_label'] = label
                 j['sentiment_score'] = score
@@ -152,8 +168,10 @@ def start_consumer():
             # Publish to news_analyzed topic (flat structure, no nested raw)
             try:
                 produce_news_analyzed(out)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ERROR] Failed to publish news_analyzed: {e}")
+                import traceback
+                traceback.print_exc()
             
             # Add to buffer (prediction runs on schedule)
             result = process_news(out)

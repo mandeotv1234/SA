@@ -156,6 +156,16 @@ export default function Login() {
       } else {
         await register(email.trim().toLowerCase(), password);
       }
+
+      // After successful login/register, redirect based on role
+      const user = useStore.getState().user;
+      const isAdmin = user && (user.role === 'admin' || user.role === 'Admin');
+
+      if (isAdmin) {
+        window.location.href = '/admin/dashboard';
+      } else {
+        window.location.href = '/';
+      }
     } catch (err) {
       // Dịch một số lỗi phổ biến từ backend nếu cần
       const errMsg = err.message || 'Thao tác thất bại';

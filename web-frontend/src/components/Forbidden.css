@@ -1,0 +1,53 @@
+.forbidden-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    width: 100vw;
+    background-color: #f8f9fa;
+    color: #333;
+    font-family: 'Inter', sans-serif;
+}
+
+.forbidden-container.dark {
+    background-color: #121212;
+    color: #e0e0e0;
+}
+
+.forbidden-content {
+    text-align: center;
+    padding: 40px;
+    max-width: 500px;
+}
+
+.forbidden-icon {
+    color: #e74c3c;
+    margin-bottom: 20px;
+}
+
+.forbidden-container h1 {
+    font-size: 3rem;
+    margin-bottom: 10px;
+    font-weight: 800;
+}
+
+.forbidden-container p {
+    font-size: 1.1rem;
+    margin-bottom: 30px;
+    opacity: 0.8;
+}
+
+.btn-home {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn-home:hover {
+    background-color: #2980b9;
+}

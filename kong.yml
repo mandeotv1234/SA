@@ -17,7 +17,7 @@ services:
     read_timeout: 30000
     routes:
       - name: auth-route
-        paths: ["/auth"]
+        paths: ["/auth", "/admin"]
         strip_path: false
     plugins:
       # Rate limiting for auth endpoints (prevent brute force)
@@ -44,6 +44,9 @@ services:
       - name: api-route
         paths: ["/api"]
         strip_path: true
+      - name: backtest-route
+        paths: ["/v1/backtest"]
+        strip_path: false
     plugins:
       # JWT validation with issuer/audience verification
       - name: jwt
@@ -64,14 +67,7 @@ services:
           hide_client_headers: false
       
       # Inject user info headers for downstream services (RBAC)
-      - name: request-transformer
-        config:
-          add:
-            headers:
-              - "X-User-Id:$(claims.sub)"
-              - "X-User-Email:$(claims.email)"
-              - "X-Is-VIP:$(claims.is_vip)"
-              - "X-Token-JTI:$(claims.jti)"
+
       
       # Request size limiting
       - name: request-size-limiting
@@ -86,8 +82,8 @@ services:
     read_timeout: 30000
     routes:
       - name: socketio-route
-        paths: ["/socket.io"]
-        strip_path: false
+        paths: ["/stream-api"]
+        strip_path: true
     plugins:
       - name: jwt
         config:
@@ -103,12 +99,7 @@ services:
           policy: local
           limit_by: credential
       
-      - name: request-transformer
-        config:
-          add:
-            headers:
-              - "X-User-Id:$(claims.sub)"
-              - "X-User-Email:$(claims.email)"
+
 
   # Investment Service: Protected by JWT
   - name: investment-service

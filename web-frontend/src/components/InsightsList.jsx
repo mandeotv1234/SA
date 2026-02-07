@@ -384,12 +384,12 @@ export default function InsightsList() {
                     >
                         🤖 Dự đoán AI
                     </button>
-                    <button
+                    {/* <button
                         className={activeTab === 'history' ? 'active' : ''}
                         onClick={() => setActiveTab('history')}
                     >
                         📋 Lịch sử
-                    </button>
+                    </button> */}
                 </div>
                 <div style={{ display: 'flex', gap: '4px' }}>
                     <button className="refresh-btn" onClick={handleToggleNotif} title={`Nhận thông báo khi có dự đoán mới cho ${currentSymbol}`}>

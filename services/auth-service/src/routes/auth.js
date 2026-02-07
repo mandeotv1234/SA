@@ -22,8 +22,9 @@ router.post('/register', async (req, res) => {
 
   try {
     const hash = await bcrypt.hash(password, 12);
+    // Explicitly set default role and status if not provided (though DB defaults exist)
     const r = await pool.query(
-      'INSERT INTO users(email, password, is_vip) VALUES($1,$2, $3) RETURNING id, email, created_at, is_vip',
+      "INSERT INTO users(email, password, is_vip, role, status) VALUES($1, $2, $3, 'Regular', 'Active') RETURNING id, email, created_at, is_vip, role, status",
       [normEmail, hash, isVip]
     );
     const user = r.rows[0];
@@ -45,13 +46,19 @@ router.post('/login', async (req, res) => {
   const userAgent = req.headers['user-agent'] || 'unknown';
 
   try {
-    const r = await pool.query('SELECT id, email, password, is_vip FROM users WHERE lower(email) = lower($1) LIMIT 1', [normEmail]);
+    const r = await pool.query('SELECT id, email, password, is_vip, role, status FROM users WHERE lower(email) = lower($1) LIMIT 1', [normEmail]);
     const row = r.rows[0];
 
     if (!row) {
       // Log failed authentication attempt
       AuditLogger.logAuthAttempt(null, normEmail, ipAddress, userAgent, false, 'user_not_found');
       return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // Check status
+    if (row.status === 'Banned' || row.status === 'Locked') {
+      AuditLogger.logAuthAttempt(row.id, normEmail, ipAddress, userAgent, false, 'account_locked_or_banned');
+      return res.status(403).json({ error: 'account_locked_or_banned', message: 'Your account is locked or banned.' });
     }
 
     const ok = await bcrypt.compare(password, row.password);
@@ -61,11 +68,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'invalid_credentials' });
     }
 
-    // Include is_vip in the token
+    // Include is_vip, role, status in the token
     const token = signToken({
       sub: row.id,
       email: row.email,
-      is_vip: !!row.is_vip
+      is_vip: !!row.is_vip,
+      role: row.role,
+      status: row.status
     });
 
     // Phase 2: Create refresh token
@@ -91,6 +100,8 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       is_vip: !!row.is_vip,
+      role: row.role,
+      status: row.status,
       refresh_token_expires_at: refreshTokenData.expiresAt
     });
   } catch (err) {
@@ -155,7 +166,7 @@ router.post('/refresh', async (req, res) => {
 
     // Get user data
     const userResult = await pool.query(
-      'SELECT id, email, is_vip FROM users WHERE id = $1 LIMIT 1',
+      'SELECT id, email, is_vip, role, status FROM users WHERE id = $1 LIMIT 1',
       [tokenRecord.user_id]
     );
 
@@ -171,11 +182,18 @@ router.post('/refresh', async (req, res) => {
 
     const user = userResult.rows[0];
 
+    // Check status logic on refresh too
+    if (user.status === 'Banned' || user.status === 'Locked') {
+      return res.status(403).json({ error: 'account_locked_or_banned', message: 'Your account is locked or banned.' });
+    }
+
     // Generate new access token
     const newAccessToken = signToken({
       sub: user.id,
       email: user.email,
-      is_vip: !!user.is_vip
+      is_vip: !!user.is_vip,
+      role: user.role,
+      status: user.status
     });
 
     // Phase 2: Token rotation - revoke old refresh token and create new one
@@ -214,6 +232,9 @@ router.post('/refresh', async (req, res) => {
 
     res.json({
       token: newAccessToken,
+      is_vip: !!user.is_vip,
+      role: user.role,
+      status: user.status,
       refresh_token_expires_at: newRefreshTokenData.expiresAt,
       message: 'Token refreshed successfully'
     });
@@ -316,7 +337,7 @@ router.get('/me', authMiddleware, async (req, res) => {
       return res.status(401).json({ error: 'invalid_token' });
     }
 
-    const r = await pool.query('SELECT id, email, is_vip, created_at FROM users WHERE id = $1 LIMIT 1', [userId]);
+    const r = await pool.query('SELECT id, email, is_vip, role, status, created_at FROM users WHERE id = $1 LIMIT 1', [userId]);
     const user = r.rows[0];
 
     if (!user) {
@@ -327,11 +348,13 @@ router.get('/me', authMiddleware, async (req, res) => {
     const newToken = signToken({
       sub: user.id,
       email: user.email,
-      is_vip: !!user.is_vip
+      is_vip: !!user.is_vip,
+      role: user.role,
+      status: user.status
     });
 
     res.json({
-      user: { id: user.id, email: user.email, is_vip: !!user.is_vip, created_at: user.created_at },
+      user: { id: user.id, email: user.email, is_vip: !!user.is_vip, role: user.role, status: user.status, created_at: user.created_at },
       token: newToken // Return fresh token
     });
   } catch (err) {

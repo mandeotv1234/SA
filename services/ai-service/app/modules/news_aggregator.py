@@ -67,7 +67,8 @@ def add_news(news_payload: Dict) -> bool:
     # Parse proper timestamp from crawler's published_at field
     news_timestamp = time.time()  # Default to now
     published_at = news_payload.get("published_at") or news_payload.get("date")
-    if published_at:
+    
+    if published_at and str(published_at).lower() != 'null':
         try:
             if isinstance(published_at, (int, float)):
                 news_timestamp = float(published_at)
@@ -78,7 +79,8 @@ def add_news(news_payload: Dict) -> bool:
                 if parsed_dt:
                     news_timestamp = parsed_dt.timestamp()
         except Exception as e:
-            LOG.warning(f"Failed to parse published_at '{published_at}': {e}")
+            # Only warn if it's not a trivial error
+            LOG.debug(f"Failed to parse published_at '{published_at}', using now(): {e}")
     
     with _buffer_lock:
         if url in _seen_urls:

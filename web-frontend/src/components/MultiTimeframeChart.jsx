@@ -4,6 +4,7 @@ import useStore from '../store';
 import { io } from 'socket.io-client';
 import { LoadingSpinner } from './LoadingSpinner';
 import { useTheme } from './ThemeProvider';
+import { calculateSMA, calculateEMA, calculateBollingerBands } from '../utils/technicalIndicators';
 
 export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     const chartContainerRef = useRef();
@@ -13,12 +14,41 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
     const socketRef = useRef(null);
     const loadingBoolRef = useRef(false);
     const oldestTimeRef = useRef(null);
-    const latestTimeRef = useRef(null); // Track latest timestamp for realtime updates
+    const latestTimeRef = useRef(null);
+
+    // Technical Indicators Series
+    const sma20SeriesRef = useRef();
+    const ema12SeriesRef = useRef();
+    const ema26SeriesRef = useRef();
+    const bbUpperSeriesRef = useRef();
+    const bbMiddleSeriesRef = useRef();
+    const bbLowerSeriesRef = useRef();
+
+    // News markers
+    const newsMarkersRef = useRef([]);
 
     const { authFetch } = useStore();
     const { isDark } = useTheme();
     const [data, setData] = useState([]);
-    const [isLoading, setIsLoading] = useState(false); // UI loading state
+    const [newsData, setNewsData] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Indicator visibility toggles
+    const [indicators, setIndicators] = useState({
+        sma20: false,
+        ema12: false,
+        ema26: false,
+        bb: false
+    });
+
+    const [showNews, setShowNews] = useState(false);
+    const [newsTooltip, setNewsTooltip] = useState(null);
+    const [selectedNews, setSelectedNews] = useState(null);
+    const [newsModalOpen, setNewsModalOpen] = useState(false);
+    const [isHoveringNews, setIsHoveringNews] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false); // For fullscreen chart modal
+    const newsMapRef = useRef(new Map());
+    const hoveredNewsRef = useRef(null);
 
     // Initialize Chart - recreate when theme changes
     useEffect(() => {
@@ -77,9 +107,60 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             scaleMargins: { top: 0.8, bottom: 0 },
         });
 
+        // Technical Indicators
+        const sma20Series = chart.addLineSeries({
+            color: '#2962FF',
+            lineWidth: 2,
+            title: 'SMA 20',
+            visible: indicators.sma20
+        });
+
+        const ema12Series = chart.addLineSeries({
+            color: '#FF6D00',
+            lineWidth: 2,
+            title: 'EMA 12',
+            visible: indicators.ema12
+        });
+
+        const ema26Series = chart.addLineSeries({
+            color: '#9C27B0',
+            lineWidth: 2,
+            title: 'EMA 26',
+            visible: indicators.ema26
+        });
+
+        // Bollinger Bands
+        const bbUpperSeries = chart.addLineSeries({
+            color: 'rgba(33, 150, 243, 0.5)',
+            lineWidth: 1,
+            title: 'BB Upper',
+            visible: indicators.bb
+        });
+
+        const bbMiddleSeries = chart.addLineSeries({
+            color: 'rgba(33, 150, 243, 0.8)',
+            lineWidth: 1,
+            lineStyle: 2, // Dashed
+            title: 'BB Middle',
+            visible: indicators.bb
+        });
+
+        const bbLowerSeries = chart.addLineSeries({
+            color: 'rgba(33, 150, 243, 0.5)',
+            lineWidth: 1,
+            title: 'BB Lower',
+            visible: indicators.bb
+        });
+
         chartRef.current = chart;
         candleSeriesRef.current = candlestickSeries;
         volumeSeriesRef.current = volumeSeries;
+        sma20SeriesRef.current = sma20Series;
+        ema12SeriesRef.current = ema12Series;
+        ema26SeriesRef.current = ema26Series;
+        bbUpperSeriesRef.current = bbUpperSeries;
+        bbMiddleSeriesRef.current = bbMiddleSeries;
+        bbLowerSeriesRef.current = bbLowerSeries;
 
         // Subscribe to visible range changes for infinite scroll
         chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
@@ -87,6 +168,80 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
                 loadHistory(oldestTimeRef.current);
             }
         });
+
+        // Subscribe to crosshair move for news marker tooltip
+        chart.subscribeCrosshairMove(param => {
+            if (!param.point || !param.time) {
+                setNewsTooltip(null);
+                hoveredNewsRef.current = null;
+                setIsHoveringNews(false);
+                return;
+            }
+
+            const time = typeof param.time === 'number' ? param.time : Math.floor(param.time);
+
+            // Calculate tolerance based on timeframe
+            // Larger timeframes need larger tolerance for hover detection
+            let tolerance = 60; // Default 60 seconds for minute charts
+            switch (timeframe) {
+                case '1m':
+                case '5m':
+                case '15m':
+                    tolerance = 60; // 1 minute
+                    break;
+                case '1h':
+                    tolerance = 300; // 5 minutes
+                    break;
+                case '4h':
+                    tolerance = 1800; // 30 minutes
+                    break;
+                case '1d':
+                    tolerance = 7200; // 2 hours
+                    break;
+                case '1w':
+                    tolerance = 86400; // 1 day
+                    break;
+                case '1M':
+                    tolerance = 604800; // 7 days
+                    break;
+            }
+
+            // Check if there's a news marker at this time (within tolerance)
+            let foundNews = null;
+            for (const [markerTime, news] of newsMapRef.current.entries()) {
+                if (Math.abs(markerTime - time) <= tolerance) {
+                    foundNews = news;
+                    break;
+                }
+            }
+
+            if (foundNews && param.point) {
+                hoveredNewsRef.current = foundNews;
+                setIsHoveringNews(true);
+                setNewsTooltip({
+                    x: param.point.x,
+                    y: param.point.y,
+                    news: foundNews
+                });
+            } else {
+                hoveredNewsRef.current = null;
+                setIsHoveringNews(false);
+                setNewsTooltip(null);
+            }
+        });
+
+        // Add click event listener for opening news modal
+        const handleChartClick = (e) => {
+            const hoveredNews = hoveredNewsRef.current;
+
+            if (hoveredNews) {
+                console.log('[Chart Click] Opening modal for news:', hoveredNews.title);
+                setSelectedNews(hoveredNews);
+                setNewsModalOpen(true);
+            }
+        };
+
+        chartContainerRef.current.addEventListener('click', handleChartClick);
 
         const handleResize = () => {
             if (chartRef.current && chartContainerRef.current) {
@@ -98,8 +253,12 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         };
 
         window.addEventListener('resize', handleResize);
+
         return () => {
             window.removeEventListener('resize', handleResize);
+            if (chartContainerRef.current) {
+                chartContainerRef.current.removeEventListener('click', handleChartClick);
+            }
             if (socketRef.current) {
                 socketRef.current.disconnect();
             }
@@ -171,6 +330,35 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         }
     };
 
+    // Load ALL news data from database (no time filtering)
+    const loadNews = async () => {
+        try {
+            console.log(`[${chartId}] Loading ALL news from database for timeframe ${timeframe}`);
+
+            // Fetch all news without time range filter
+            // The chart will automatically display markers at correct positions based on their timestamps
+            const url = `/v1/news?limit=5000`; // Increased limit to get more historical news
+            const res = await authFetch(url);
+
+            if (res.ok) {
+                const newsResponse = await res.json();
+                setNewsData(newsResponse.rows || []);
+                console.log(`[${chartId}] Loaded ${newsResponse.rows?.length || 0} total news events for all timeframes`);
+            } else {
+                console.error(`[${chartId}] News API returned error:`, res.status);
+            }
+        } catch (e) {
+            console.error(`[${chartId}] Fetch news failed`, e);
+        }
+    };
+
+    // Load news once when component mounts or when news is enabled
+    useEffect(() => {
+        if (showNews) {
+            loadNews();
+        }
+    }, [showNews, symbol]); // Only reload when showNews changes or symbol changes
+
     // Reload when symbol or timeframe changes
     useEffect(() => {
         setData([]);
@@ -189,6 +377,29 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
                 color: d.color
             })));
 
+            // Calculate and set technical indicators
+            if (indicators.sma20 && sma20SeriesRef.current) {
+                const sma20Data = calculateSMA(data, 20);
+                sma20SeriesRef.current.setData(sma20Data);
+            }
+
+            if (indicators.ema12 && ema12SeriesRef.current) {
+                const ema12Data = calculateEMA(data, 12);
+                ema12SeriesRef.current.setData(ema12Data);
+            }
+
+            if (indicators.ema26 && ema26SeriesRef.current) {
+                const ema26Data = calculateEMA(data, 26);
+                ema26SeriesRef.current.setData(ema26Data);
+            }
+
+            if (indicators.bb && bbUpperSeriesRef.current && bbMiddleSeriesRef.current && bbLowerSeriesRef.current) {
+                const bbData = calculateBollingerBands(data, 20, 2);
+                bbUpperSeriesRef.current.setData(bbData.upper);
+                bbMiddleSeriesRef.current.setData(bbData.middle);
+                bbLowerSeriesRef.current.setData(bbData.lower);
+            }
+
             // Update oldest time for infinite scroll
             if (oldestTimeRef.current === null || data[0].time < oldestTimeRef.current) {
                 oldestTimeRef.current = data[0].time;
@@ -197,7 +408,78 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
             // Update latest time for realtime updates
             latestTimeRef.current = data[data.length - 1].time;
         }
-    }, [data, isDark]); // Include isDark to reapply data when theme changes and chart is recreated
+    }, [data, isDark, indicators]);
+
+    // Update indicator visibility
+    useEffect(() => {
+        if (sma20SeriesRef.current) {
+            sma20SeriesRef.current.applyOptions({ visible: indicators.sma20 });
+        }
+        if (ema12SeriesRef.current) {
+            ema12SeriesRef.current.applyOptions({ visible: indicators.ema12 });
+        }
+        if (ema26SeriesRef.current) {
+            ema26SeriesRef.current.applyOptions({ visible: indicators.ema26 });
+        }
+        if (bbUpperSeriesRef.current && bbMiddleSeriesRef.current && bbLowerSeriesRef.current) {
+            bbUpperSeriesRef.current.applyOptions({ visible: indicators.bb });
+            bbMiddleSeriesRef.current.applyOptions({ visible: indicators.bb });
+            bbLowerSeriesRef.current.applyOptions({ visible: indicators.bb });
+        }
+    }, [indicators]);
+
+    // Add news markers to chart
+    useEffect(() => {
+        if (candleSeriesRef.current && data.length > 0) {
+            if (!showNews || newsData.length === 0) {
+                // Clear markers if news is hidden or no data
+                candleSeriesRef.current.setMarkers([]);
+                newsMarkersRef.current = [];
+                newsMapRef.current.clear();
+                setSelectedNews(null);
+                return;
+            }
+
+            // Create markers for ALL news events at their exact timestamps
+            const newsMap = new Map();
+
+            const markersWithNews = newsData
+                .map(news => {
+                    const newsTime = Math.floor(new Date(news.time).getTime() / 1000);
+
+                    // Determine marker color based on sentiment
+                    let color = '#2196F3'; // Blue for neutral
+                    if (news.sentiment_score > 0.3) {
+                        color = '#4CAF50'; // Green for positive
+                    } else if (news.sentiment_score < -0.3) {
+                        color = '#F44336'; // Red for negative
+                    }
+
+                    // Store news data in map
+                    newsMap.set(newsTime, news);
+
+                    return {
+                        time: newsTime,
+                        position: 'aboveBar',
+                        color: color,
+                        shape: 'circle',
+                        text: 'N',
+                        size: 1
+                    };
+                })
+                .sort((a, b) => a.time - b.time); // Sort by time ascending (required by lightweight-charts)
+
+            candleSeriesRef.current.setMarkers(markersWithNews);
+            newsMarkersRef.current = markersWithNews;
+            newsMapRef.current = newsMap;
+            console.log(`[${chartId}] Added ${markersWithNews.length} news markers to chart (all news items)`);
+
+            // Auto-select first news if none selected
+            if (!selectedNews && newsMap.size > 0) {
+                setSelectedNews(Array.from(newsMap.values())[0]);
+            }
+        }
+    }, [newsData, data, showNews]);
 
     // Socket.IO for Realtime Updates (all timeframes)
     useEffect(() => {
@@ -307,11 +589,206 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
         };
     }, [symbol, timeframe, chartId]);
 
+    const toggleIndicator = (indicator) => {
+        setIndicators(prev => ({
+            ...prev,
+            [indicator]: !prev[indicator]
+        }));
+    };
+
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+            {/* Indicator Controls */}
+            <div style={{
+                position: 'absolute',
+                top: 12,
+                right: 12,
+                zIndex: 20,
+                backgroundColor: isDark ? 'rgba(19, 23, 34, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                gap: '8px',
+                flexWrap: 'wrap',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+            }}>
+                <button
+                    onClick={() => toggleIndicator('sma20')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.sma20 ? '#2962FF' : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                        color: indicators.sma20 ? '#fff' : (isDark ? '#d1d4dc' : '#333'),
+                        fontWeight: indicators.sma20 ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    SMA 20
+                </button>
+                <button
+                    onClick={() => toggleIndicator('ema12')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.ema12 ? '#FF6D00' : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                        color: indicators.ema12 ? '#fff' : (isDark ? '#d1d4dc' : '#333'),
+                        fontWeight: indicators.ema12 ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    EMA 12
+                </button>
+                <button
+                    onClick={() => toggleIndicator('ema26')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.ema26 ? '#9C27B0' : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                        color: indicators.ema26 ? '#fff' : (isDark ? '#d1d4dc' : '#333'),
+                        fontWeight: indicators.ema26 ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    EMA 26
+                </button>
+                <button
+                    onClick={() => toggleIndicator('bb')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.bb ? '#2196F3' : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                        color: indicators.bb ? '#fff' : (isDark ? '#d1d4dc' : '#333'),
+                        fontWeight: indicators.bb ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    BB
+                </button>
+                <button
+                    onClick={() => setShowNews(!showNews)}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: showNews ? '#FFC107' : (isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                        color: showNews ? '#000' : (isDark ? '#d1d4dc' : '#333'),
+                        fontWeight: showNews ? 'bold' : 'normal',
+                        transition: 'all 0.2s'
+                    }}
+                >
+                    📰 News
+                </button>
+
+                {/* Only show expand button if not already expanded */}
+                {!chartId.includes('-expanded') && (
+                    <button
+                        onClick={() => setIsExpanded(true)}
+                        style={{
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            borderRadius: '4px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            backgroundColor: isDark ? 'rgba(33, 150, 243, 0.2)' : 'rgba(33, 150, 243, 0.3)',
+                            color: '#2196F3',
+                            fontWeight: 'bold',
+                            transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                            e.target.style.backgroundColor = isDark ? 'rgba(33, 150, 243, 0.3)' : 'rgba(33, 150, 243, 0.4)';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.target.style.backgroundColor = isDark ? 'rgba(33, 150, 243, 0.2)' : 'rgba(33, 150, 243, 0.3)';
+                        }}
+                    >
+                        ⛶ Mở rộng
+                    </button>
+                )}
+            </div>
+
+            {/* News Legend */}
+            {showNews && newsData.length > 0 && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: 45,
+                    left: 12,
+                    zIndex: 20,
+                    backgroundColor: isDark ? 'rgba(19, 23, 34, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    backdropFilter: 'blur(4px)',
+                    fontSize: '11px',
+                    color: isDark ? '#d1d4dc' : '#333',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: selectedNews ? '8px' : '0' }}>
+                        <span style={{ fontWeight: 'bold' }}>Tin tức:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4CAF50' }}></div>
+                            <span>Tích cực</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#2196F3' }}></div>
+                            <span>Trung lập</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#F44336' }}></div>
+                            <span>Tiêu cực</span>
+                        </div>
+                        <span style={{ marginLeft: '8px', opacity: 0.7 }}>({newsMarkersRef.current.length} sự kiện)</span>
+                    </div>
+                </div>
+            )}
+
+            {/* News Tooltip */}
+            {showNews && newsTooltip && (
+                <div style={{
+                    position: 'absolute',
+                    left: newsTooltip.x + 15,
+                    top: newsTooltip.y - 40,
+                    zIndex: 30,
+                    backgroundColor: isDark ? 'rgba(19, 23, 34, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    maxWidth: '300px',
+                    pointerEvents: 'none',
+                    border: `2px solid ${newsTooltip.news.sentiment_score > 0.3 ? '#4CAF50' : (newsTooltip.news.sentiment_score < -0.3 ? '#F44336' : '#2196F3')}`
+                }}>
+                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: isDark ? '#FFC107' : '#F57C00', marginBottom: '4px' }}>
+                        {newsTooltip.news.title || 'No title'}
+                    </div>
+                    <div style={{ fontSize: '10px', opacity: 0.8, color: isDark ? '#d1d4dc' : '#333', marginBottom: '4px' }}>
+                        {newsTooltip.news.source || 'Unknown'} • {new Date(newsTooltip.news.time).toLocaleTimeString('vi-VN')}
+                    </div>
+                    <div style={{ fontSize: '9px', opacity: 0.6, fontStyle: 'italic', marginTop: '4px', borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`, paddingTop: '4px' }}>
+                        💡 Click để xem chi tiết
+                    </div>
+                </div>
+            )}
+
             <div
                 ref={chartContainerRef}
-                style={{ width: '100%', height: '100%' }}
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    cursor: isHoveringNews ? 'pointer' : 'default'
+                }}
             />
             {/* Loading Overlay */}
             {isLoading && (
@@ -330,6 +807,334 @@ export default function MultiTimeframeChart({ symbol, timeframe, chartId }) {
                     animation: 'fadeIn 0.2s ease-out'
                 }}>
                     <LoadingSpinner size="md" text="Đang tải..." />
+                </div>
+            )}
+
+            {/* News Detail Modal */}
+            {newsModalOpen && selectedNews && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                        padding: '20px'
+                    }}
+                    onClick={() => setNewsModalOpen(false)}
+                >
+                    <div
+                        style={{
+                            backgroundColor: isDark ? '#1a1e2e' : '#ffffff',
+                            borderRadius: '12px',
+                            maxWidth: '700px',
+                            width: '100%',
+                            maxHeight: '80vh',
+                            overflow: 'auto',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                            position: 'relative'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Close Button */}
+                        <button
+                            onClick={() => setNewsModalOpen(false)}
+                            style={{
+                                position: 'absolute',
+                                top: '16px',
+                                right: '16px',
+                                background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '36px',
+                                height: '36px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '20px',
+                                color: isDark ? '#fff' : '#333',
+                                transition: 'all 0.2s',
+                                zIndex: 1
+                            }}
+                            onMouseEnter={(e) => {
+                                e.target.style.background = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.target.style.background = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+                            }}
+                        >
+                            ✕
+                        </button>
+
+                        {/* Modal Content */}
+                        <div style={{ padding: '32px' }}>
+                            {(() => {
+                                // Use raw_score if available, otherwise use root level
+                                const newsDetail = selectedNews.raw_score || selectedNews;
+                                const sentimentScore = newsDetail.sentiment_score || 0;
+
+                                return (
+                                    <>
+                                        {/* Sentiment Badge */}
+                                        <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                            <span style={{
+                                                display: 'inline-block',
+                                                padding: '6px 12px',
+                                                borderRadius: '20px',
+                                                fontSize: '12px',
+                                                fontWeight: 'bold',
+                                                backgroundColor: sentimentScore > 0.3
+                                                    ? 'rgba(76, 175, 80, 0.2)'
+                                                    : (sentimentScore < -0.3 ? 'rgba(244, 67, 54, 0.2)' : 'rgba(33, 150, 243, 0.2)'),
+                                                color: sentimentScore > 0.3
+                                                    ? '#4CAF50'
+                                                    : (sentimentScore < -0.3 ? '#F44336' : '#2196F3')
+                                            }}>
+                                                {sentimentScore > 0.3 ? '📈 Tích cực' : (sentimentScore < -0.3 ? '📉 Tiêu cực' : '➖ Trung lập')}
+                                                {' '}
+                                                ({(sentimentScore * 100).toFixed(1)}%)
+                                            </span>
+
+                                            {newsDetail.category && (
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    padding: '6px 12px',
+                                                    borderRadius: '20px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 'bold',
+                                                    backgroundColor: isDark ? 'rgba(255, 193, 7, 0.2)' : 'rgba(255, 193, 7, 0.3)',
+                                                    color: isDark ? '#FFC107' : '#F57C00'
+                                                }}>
+                                                    📂 {newsDetail.category}
+                                                </span>
+                                            )}
+
+                                            {newsDetail.relevance_score !== undefined && (
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    padding: '6px 12px',
+                                                    borderRadius: '20px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 'bold',
+                                                    backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.3)',
+                                                    color: '#9C27B0'
+                                                }}>
+                                                    🎯 Relevance: {(newsDetail.relevance_score * 100).toFixed(0)}%
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {/* Title */}
+                                        <h2 style={{
+                                            margin: '0 0 16px 0',
+                                            fontSize: '24px',
+                                            fontWeight: 'bold',
+                                            color: isDark ? '#FFC107' : '#F57C00',
+                                            lineHeight: '1.4',
+                                            paddingRight: '40px'
+                                        }}>
+                                            {newsDetail.title || 'Không có tiêu đề'}
+                                        </h2>
+
+                                        {/* Meta Info */}
+                                        <div style={{
+                                            display: 'flex',
+                                            gap: '16px',
+                                            marginBottom: '16px',
+                                            fontSize: '14px',
+                                            color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                                            flexWrap: 'wrap'
+                                        }}>
+                                            <div>
+                                                <strong>📍 Nguồn:</strong> {newsDetail.source || 'Unknown'}
+                                            </div>
+                                            <div>
+                                                <strong>🕒 Thời gian:</strong> {new Date(newsDetail.published_at || newsDetail.time || selectedNews.time).toLocaleString('vi-VN')}
+                                            </div>
+                                        </div>
+
+                                        {/* Symbols */}
+                                        {newsDetail.symbols && newsDetail.symbols.length > 0 && (
+                                            <div style={{
+                                                marginBottom: '16px',
+                                                fontSize: '13px',
+                                                color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)'
+                                            }}>
+                                                <strong>💱 Symbols:</strong> {newsDetail.symbols.join(', ')}
+                                            </div>
+                                        )}
+
+                                        {/* Divider */}
+                                        <div style={{
+                                            height: '1px',
+                                            background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                            margin: '24px 0'
+                                        }} />
+
+                                        {/* Content */}
+                                        {newsDetail.content && (
+                                            <div style={{
+                                                fontSize: '15px',
+                                                lineHeight: '1.8',
+                                                color: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)',
+                                                marginBottom: '24px',
+                                                maxHeight: '400px',
+                                                overflowY: 'auto',
+                                                paddingRight: '8px'
+                                            }}>
+                                                {newsDetail.content}
+                                            </div>
+                                        )}
+
+                                        {/* Link to Original Article */}
+                                        {newsDetail.url && (
+                                            <a
+                                                href={newsDetail.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{
+                                                    display: 'inline-block',
+                                                    padding: '12px 24px',
+                                                    backgroundColor: isDark ? '#2196F3' : '#1976D2',
+                                                    color: '#fff',
+                                                    textDecoration: 'none',
+                                                    borderRadius: '6px',
+                                                    fontWeight: 'bold',
+                                                    fontSize: '14px',
+                                                    transition: 'all 0.2s',
+                                                    boxShadow: '0 2px 8px rgba(33, 150, 243, 0.3)'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.target.style.backgroundColor = isDark ? '#1976D2' : '#1565C0';
+                                                    e.target.style.transform = 'translateY(-2px)';
+                                                    e.target.style.boxShadow = '0 4px 12px rgba(33, 150, 243, 0.4)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.target.style.backgroundColor = isDark ? '#2196F3' : '#1976D2';
+                                                    e.target.style.transform = 'translateY(0)';
+                                                    e.target.style.boxShadow = '0 2px 8px rgba(33, 150, 243, 0.3)';
+                                                }}
+                                            >
+                                                🔗 Đọc bài viết đầy đủ
+                                            </a>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Expanded Chart Modal */}
+            {isExpanded && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        zIndex: 2000,
+                        padding: '20px'
+                    }}
+                    onClick={() => setIsExpanded(false)}
+                >
+                    <div
+                        style={{
+                            backgroundColor: isDark ? '#1a1e2e' : '#ffffff',
+                            borderRadius: '12px',
+                            width: '100%',
+                            height: '100%',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                            position: 'relative',
+                            overflow: 'hidden'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div style={{
+                            padding: '16px 24px',
+                            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                        }}>
+                            <h2 style={{
+                                margin: 0,
+                                fontSize: '20px',
+                                fontWeight: 'bold',
+                                color: isDark ? '#FFC107' : '#F57C00'
+                            }}>
+                                {symbol} - {timeframe.toUpperCase()}
+                            </h2>
+
+                            <button
+                                onClick={() => setIsExpanded(false)}
+                                style={{
+                                    background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                    border: 'none',
+                                    borderRadius: '50%',
+                                    width: '40px',
+                                    height: '40px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '24px',
+                                    color: isDark ? '#fff' : '#333',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.target.style.background = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.target.style.background = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Chart Info */}
+                        <div style={{
+                            padding: '12px 24px',
+                            fontSize: '14px',
+                            color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`
+                        }}>
+                            💡 Biểu đồ mở rộng - Xem rõ hơn với màn hình lớn, có thể scroll để xem tất cả news markers
+                        </div>
+
+                        {/* Expanded Chart Content - Full chart with all features */}
+                        <div style={{
+                            flex: 1,
+                            padding: '20px',
+                            position: 'relative',
+                            minHeight: 0,
+                            overflow: 'auto' // Allow scrolling if too many news
+                        }}>
+                            {/* Render the same chart component recursively */}
+                            <MultiTimeframeChart
+                                symbol={symbol}
+                                timeframe={timeframe}
+                                chartId={`${chartId}-expanded`}
+                            />
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
