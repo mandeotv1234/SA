@@ -34,12 +34,14 @@ async function initDB() {
     `);
     console.log("   → users table ensured (base)");
 
-    // Ensure columns exist (Add is_vip and notification_settings)
+    // Ensure columns exist (Add is_vip, notification_settings, role, status)
     const alterStmts = [
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS email text;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS password text;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip boolean DEFAULT false;`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_settings JSONB DEFAULT '{"prediction_symbols": [], "investment_enabled": false}'::jsonb;`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS role text DEFAULT 'user';`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();`
     ];
     for (const s of alterStmts) {
@@ -83,6 +85,34 @@ async function initDB() {
       }
     } else {
       console.log("⚠️ Duplicate non-null emails found; skipping adding UNIQUE constraint on email.");
+    }
+
+    // Create default admin account if not exists
+    console.log("👤 Ensuring admin account exists...");
+    const bcrypt = require('bcryptjs');
+    const adminEmail = 'dnat270204@gmail.com';
+    const adminPassword = 'Vlchinsu1234*';
+
+    const existingAdmin = await client.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1);`,
+      [adminEmail]
+    );
+
+    if (existingAdmin.rowCount === 0) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      await client.query(
+        `INSERT INTO users (email, password, role, status, is_vip, created_at) 
+         VALUES ($1, $2, 'admin', 'active', true, NOW());`,
+        [adminEmail, hashedPassword]
+      );
+      console.log(`   → ✅ Admin account created: ${adminEmail}`);
+    } else {
+      // Update existing account to admin if needed
+      await client.query(
+        `UPDATE users SET role = 'admin', status = 'active' WHERE LOWER(email) = LOWER($1);`,
+        [adminEmail]
+      );
+      console.log(`   → ✅ Admin account verified: ${adminEmail}`);
     }
 
     // Report current columns

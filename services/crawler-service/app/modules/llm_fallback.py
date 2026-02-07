@@ -20,7 +20,16 @@ CRYPTO_KEYWORDS = [
     'binance', 'coinbase', 'defi', 'nft', 'altcoin', 'token',
     'solana', 'sol', 'bnb', 'doge', 'dogecoin', 'xrp', 'ripple',
     'fed', 'federal reserve', 'interest rate', 'inflation', 'cpi',
-    'sec', 'regulation', 'etf', 'halving', 'whale', 'liquidation'
+    'sec', 'regulation', 'etf', 'halving', 'whale', 'liquidation',
+    'tài sản mã hóa', 'tiền mã hóa', 'tiền điện tử', 'sàn giao dịch'
+]
+
+# High-impact keywords that significantly boost relevance
+HIGH_IMPACT_KEYWORDS = [
+    'cấp phép', 'giấy phép', 'phê duyệt', 'hợp pháp hóa', 'thí điểm',
+    'license', 'approval', 'legalize', 'etf', 'sec approval',
+    'institutional adoption', 'regulatory', 'government', 'central bank',
+    'ngân hàng trung ương', 'chính phủ', 'bộ tài chính', 'quy định'
 ]
 
 SYMBOL_MAPPING = {
@@ -107,27 +116,80 @@ def _detect_symbols(text: str) -> list:
 
 
 def _calculate_relevance(text: str) -> float:
-    """Calculate relevance score based on keyword density."""
+    """
+    Calculate relevance score based on keyword density and impact.
+    High-impact keywords (regulatory, adoption) significantly boost score.
+    """
     text_lower = text.lower()
-    count = sum(1 for kw in CRYPTO_KEYWORDS if kw in text_lower)
-    # Base 0.3, +0.1 per keyword, max 1.0
-    return min(1.0, 0.3 + count * 0.1)
+    
+    # Count high-impact keywords (worth 0.3 each)
+    high_impact_count = sum(1 for kw in HIGH_IMPACT_KEYWORDS if kw in text_lower)
+    
+    # Count regular crypto keywords (worth 0.1 each)
+    crypto_count = sum(1 for kw in CRYPTO_KEYWORDS if kw in text_lower)
+    
+    # Calculate score
+    # High impact: 0.3 per keyword (regulatory/adoption news)
+    # Regular: 0.1 per keyword (general crypto mentions)
+    # Base: 0.2 (minimum for any crypto-related article)
+    score = 0.2 + (high_impact_count * 0.3) + (crypto_count * 0.1)
+    
+    return min(1.0, round(score, 2))
 
 
-def _detect_sentiment(text: str) -> str:
-    """Simple keyword-based sentiment detection."""
+def _detect_sentiment(text: str) -> tuple[str, float]:
+    """
+    Enhanced sentiment detection with numeric score.
+    Returns: (label, score) where score is -1.0 to +1.0
+    """
     text_lower = text.lower()
-    positive = ['tăng', 'surge', 'bullish', 'rally', 'gain', 'profit', 'ath', 'breakout', 'soar']
-    negative = ['giảm', 'crash', 'bearish', 'dump', 'loss', 'scam', 'hack', 'ban', 'plunge', 'correction']
     
-    pos = sum(1 for w in positive if w in text_lower)
-    neg = sum(1 for w in negative if w in text_lower)
+    # Expanded keyword lists with weights
+    very_positive = ['cấp phép', 'phê duyệt', 'hợp pháp hóa', 'thông qua', 'chấp thuận', 
+                     'approval', 'approved', 'legalize', 'adoption', 'breakthrough', 
+                     'ath', 'all-time high', 'moon', 'bullrun']
+    positive = ['tăng', 'surge', 'bullish', 'rally', 'gain', 'profit', 'breakout', 'soar',
+                'tích cực', 'lạc quan', 'tăng trưởng', 'phát triển', 'mở rộng', 'tiềm năng',
+                'rise', 'growth', 'expand', 'potential', 'opportunity', 'buy', 'accumulation']
     
-    if pos > neg + 1:
-        return "Positive"
-    elif neg > pos + 1:
-        return "Negative"
-    return "Neutral"
+    very_negative = ['scam', 'hack', 'fraud', 'bankruptcy', 'ban', 'cấm', 'lừa đảo', 
+                     'phá sản', 'crash', 'collapse', 'sụp đổ']
+    negative = ['giảm', 'bearish', 'dump', 'plunge', 'drop', 'fall', 'decline', 'loss',
+                'tiêu cực', 'lo ngại', 'rủi ro', 'cảnh báo', 'suy giảm', 'correction',
+                'sell', 'liquidation', 'fear', 'panic', 'warning', 'risk', 'concern']
+    
+    # Count matches with weights
+    very_pos_count = sum(1 for kw in very_positive if kw in text_lower)
+    pos_count = sum(1 for kw in positive if kw in text_lower)
+    very_neg_count = sum(1 for kw in very_negative if kw in text_lower)
+    neg_count = sum(1 for kw in negative if kw in text_lower)
+    
+    # Calculate weighted score
+    # Very positive/negative keywords have 2x weight
+    pos_score = (very_pos_count * 2) + pos_count
+    neg_score = (very_neg_count * 2) + neg_count
+    
+    total = pos_score + neg_score
+    
+    if total == 0:
+        return ("Neutral", 0.0)
+    
+    # Calculate normalized score (-1 to +1)
+    raw_score = (pos_score - neg_score) / total
+    
+    # Apply sigmoid-like scaling for more granular scores
+    # This prevents extreme -1/+1 unless very strong signals
+    score = max(-1.0, min(1.0, raw_score * 0.8))
+    
+    # Determine label based on score thresholds
+    if score >= 0.3:
+        label = "Positive"
+    elif score <= -0.3:
+        label = "Negative"
+    else:
+        label = "Neutral"
+    
+    return (label, round(score, 2))
 
 
 def extract_with_heuristics(html: str, url: str) -> Dict:
@@ -159,7 +221,7 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
         
         symbols = _detect_symbols(full_text)
         relevance = _calculate_relevance(full_text)
-        sentiment = _detect_sentiment(full_text)
+        sentiment_label, sentiment_score = _detect_sentiment(full_text)
         
         # Determine category
         if relevance >= 0.5:
@@ -169,7 +231,7 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
         else:
             category = "General"
         
-        LOG.info(f"Extracted: {title[:50]}... | symbols={symbols} | rel={relevance:.2f}")
+        LOG.info(f"Extracted: {title[:50]}... | symbols={symbols} | rel={relevance:.2f} | sentiment={sentiment_score:.2f}")
         
         return {
             "title": title,
@@ -177,7 +239,8 @@ def extract_with_heuristics(html: str, url: str) -> Dict:
             "content": content,
             "category": category,
             "relevance_score": round(relevance, 2),
-            "sentiment": sentiment,
+            "sentiment_label": sentiment_label,
+            "sentiment_score": sentiment_score,
             "symbols": symbols,
             "url": url
         }

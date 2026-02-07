@@ -351,7 +351,7 @@ const useStore = create((set, get) => ({
     const { token } = get();
     let url = endpoint;
     if (!endpoint.startsWith('http')) {
-      if (endpoint.startsWith('/auth')) {
+      if (endpoint.startsWith('/auth') || endpoint.startsWith('/admin')) {
         url = `${GATEWAY}${endpoint}`;
       } else if (endpoint.startsWith('/v1/investments')) {
         url = `${GATEWAY}/invest-api${endpoint}`;

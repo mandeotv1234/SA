@@ -242,7 +242,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CRAWL_INTERVAL_SECONDS: "60"
       LOG_LEVEL: "DEBUG"
-      NEWS_RAW_TOPIC: news_raw_v2
+      NEWS_RAW_TOPIC: news_raw
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_MODEL: "gemma-3-1b-it"
       MONGO_URL: "mongodb://mongo-crawler:27017"
@@ -291,7 +291,7 @@ services:
       context: ./services/ai-service
     environment:
       KAFKA_BROKERS: kafka:9092
-      NEWS_RAW_TOPIC: news_raw_v2
+      NEWS_RAW_TOPIC: news_raw
       NEWS_ANALYZED_TOPIC: news_analyzed
       KAFKA_GROUP: ai-service-group-v3
       AI_INSIGHTS_TOPIC: ai_insights

@@ -9,6 +9,9 @@ services:
       - name: auth-route
         paths: ["/auth"]
         strip_path: false
+      - name: admin-route
+        paths: ["/admin"]
+        strip_path: false
 
   - name: core-service
     url: "http://core-service:3000"

@@ -3,7 +3,7 @@ import useStore from '../store';
 import SymbolSelector from './SymbolSelector';
 import { useToast } from './ToastProvider';
 import { useTheme } from './ThemeProvider';
-import { User, Activity, LogOut, CheckCircle, BarChart3, TrendingUp, Sparkles, Sun, Moon } from 'lucide-react';
+import { User, Activity, LogOut, CheckCircle, BarChart3, TrendingUp, Sparkles, Sun, Moon, History } from 'lucide-react';
 
 export default function Navbar({ currentPage, onNavigate }) {
     const { logout, isVip, price } = useStore();
@@ -49,6 +49,15 @@ export default function Navbar({ currentPage, onNavigate }) {
                     >
                         <TrendingUp size={16} />
                         <span>Đầu Tư</span>
+                        {!isVip && <span className="vip-badge-mini">VIP</span>}
+                    </button>
+                    <button
+                        className={`nav-tab ${currentPage === 'backtesting' ? 'active' : ''}`}
+                        onClick={() => onNavigate('backtesting')}
+                        title={!isVip ? 'Tính năng VIP' : 'Kiểm thử chiến thuật'}
+                    >
+                        <History size={16} />
+                        <span>Backtest</span>
                         {!isVip && <span className="vip-badge-mini">VIP</span>}
                     </button>
                 </div>

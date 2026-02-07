@@ -26,6 +26,23 @@ if not logging.getLogger().hasHandlers():
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s"
     )
+    
+    # Disable noisy debug logs from libraries
+    logging.getLogger("pymongo").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.connection").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.command").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.topology").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("trafilatura").setLevel(logging.WARNING)
+    logging.getLogger("trafilatura.main_extractor").setLevel(logging.WARNING)
+    logging.getLogger("trafilatura.readability_lxml").setLevel(logging.WARNING)
+    logging.getLogger("trafilatura.external").setLevel(logging.WARNING)
+    
+    # Keep crawler, gemini, and extraction logs at INFO
+    logging.getLogger("crawler").setLevel(logging.INFO)
+    logging.getLogger("crawler.gemini").setLevel(logging.INFO)
+    logging.getLogger("crawler.extraction").setLevel(logging.INFO)
 
 app = FastAPI(title="Crawler Service")
 
@@ -82,8 +99,12 @@ def _is_crypto_related(title: str, content: str) -> bool:
 async def process_article_task(item: dict):
     """Async task to extract and publish article."""
     url = item.get('link') or item.get('url')
-    LOG.info(f"DEBUG: Processing task for {url}")
     if not url: return
+    
+    # Blacklist: Skip Google News redirect URLs (cannot be parsed)
+    if 'news.google.com/rss/articles/' in url:
+        LOG.debug(f"Skipping Google News redirect: {url[:80]}...")
+        return
 
     key = f"crawler:seen:{_url_hash(url)}"
     if redis_client.exists(key):
@@ -128,7 +149,7 @@ async def process_article_task(item: dict):
         
         # CRYPTO KEYWORD FILTER
         if not _is_crypto_related(data.get('title', ''), data.get('content', '')):
-            LOG.debug(f"Skipping non-crypto article (HTML): {data.get('title', '')[:60]}...")
+            LOG.info(f"Skipping non-crypto article: {data.get('title', '')[:50]}... (Extracted but filtered)")
             return
              
         # 3. Publish
@@ -143,7 +164,7 @@ async def process_article_task(item: dict):
             'symbol': data.get('symbols', ['BTCUSDT'])[0] if data.get('symbols') else None,
             'symbols': data.get('symbols', ['BTCUSDT']),  # All related symbols
             'category': data.get('category', 'General'),
-            'sentiment': data.get('sentiment', 'Neutral'),
+            'sentiment': data.get('sentiment'),
             'relevance_score': data.get('relevance_score', 0.5)
         }
         

@@ -119,7 +119,33 @@ const run = async () => {
       try {
         const payload = JSON.parse(message.value.toString());
         // Expected payload fields: url, title, published_at, source, sentiment_label, sentiment_score, raw
-        const time = payload.published_at ? new Date(payload.published_at) : new Date();
+        // Expected payload fields: url, title, published_at, source, sentiment_label, sentiment_score, raw
+        let time;
+        try {
+          if (payload.published_at && !isNaN(payload.published_at)) {
+            // Handle numeric timestamp (seconds vs ms)
+            let ts = Number(payload.published_at);
+            if (ts < 100000000000) ts *= 1000; // Assume seconds if small number
+            time = new Date(ts);
+          } else {
+            time = payload.published_at ? new Date(payload.published_at) : new Date();
+          }
+        } catch (e) {
+          time = new Date();
+        }
+
+        // Fallback to now ONLY if invalid date. 
+        // DO NOT reset future dates generally, as timezone diffs can cause consistent 'future' dates.
+        // We want deterministic time for deduplication.
+        if (isNaN(time.getTime())) {
+          time = new Date();
+        }
+
+        // Log warning for future dates but KEEP them
+        const now = new Date();
+        if (time > new Date(now.getTime() + 10 * 60000)) {
+          // console.warn(`[WARN] Future date logs detected '${time.toISOString()}' (Server: ${now.toISOString()}). Keeping original time.`);
+        }
         const url = payload.url || payload.link || null;
         if (!url) return;
         const title = payload.title || null;

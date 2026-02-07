@@ -42,10 +42,17 @@ def _delivery(err, msg):
 
 def produce_news_analyzed(data: dict, flush: bool = False):
     try:
-        producer.produce(NEWS_ANALYZED_TOPIC, json.dumps(data, ensure_ascii=False).encode("utf-8"), callback=_delivery)
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        producer.produce(NEWS_ANALYZED_TOPIC, payload, callback=_delivery)
         producer.poll(0)
-    except Exception:
-        LOG.exception("Failed producing news_analyzed")
+        
+        # Log what was published (DEBUG only - removed to reduce noise)
+        # title = data.get('title', 'Unknown')[:60]
+        # print(f"[KAFKA-PUBLISH] Sent to '{NEWS_ANALYZED_TOPIC}': {title}...")
+        pass
+        
+    except Exception as e:
+        LOG.exception(f"Failed producing news_analyzed: {e}")
         raise
     if flush:
         try:

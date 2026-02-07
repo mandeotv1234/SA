@@ -15,6 +15,9 @@ app.use(cookieParser()); // Phase 2: Parse cookies for refresh tokens
 // public auth routes
 app.use('/auth', authRoutes);
 
+const adminRoutes = require('./routes/admin');
+app.use('/admin', adminRoutes);
+
 // protected example endpoint
 app.get('/profile', authMiddleware, async (req, res) => {
   const user = { id: req.user.sub, email: req.user.email };

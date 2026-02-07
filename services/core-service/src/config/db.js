@@ -58,7 +58,7 @@ const initDB = async () => {
         title TEXT,
         sentiment_score DOUBLE PRECISION,
         raw_score JSONB,
-        UNIQUE (url)
+        UNIQUE (url, time)
       );
     `);
 

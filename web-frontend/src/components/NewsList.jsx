@@ -2,13 +2,17 @@ import React, { useEffect, useState } from 'react';
 import useStore from '../store';
 import { ExternalLink, Clock, RefreshCw } from 'lucide-react';
 import { NewsListSkeleton } from './LoadingSpinner';
+import { useTheme } from './ThemeProvider';
 
 export default function NewsList() {
     const { authFetch, currentSymbol } = useStore();
+    const { isDark } = useTheme();
     const [news, setNews] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
+    const [selectedNews, setSelectedNews] = useState(null);
+    const [modalOpen, setModalOpen] = useState(false);
     const LIMIT = 10;
 
     useEffect(() => {
@@ -53,10 +57,23 @@ export default function NewsList() {
         if (page < totalPages) setPage(p => p + 1);
     };
 
+    const openNewsModal = (newsItem) => {
+        setSelectedNews(newsItem);
+        setModalOpen(true);
+    };
+
+    const formatNewsTime = (dateStr) => {
+        if (!dateStr) return 'N/A';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return 'N/A';
+            return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        } catch (e) {
+            return 'N/A';
+        }
+    };
+
     // Show skeleton when loading initially (page 1) or when explicitly loading new page data
-    // Adjusted logic: show skeleton if loading AND we don't want to show stale data
-    // But user asked to "keep loading as current" which implies smooth transition or skeleton
-    // Let's use skeleton for better UX when switching pages
     if (loading && news.length === 0) {
         return (
             <div className="news-list" style={{ padding: '12px' }}>
@@ -79,27 +96,104 @@ export default function NewsList() {
                 </div>
             )}
 
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
                 {loading ? (
                     <div style={{ padding: '12px' }}><NewsListSkeleton count={LIMIT} /></div>
                 ) : news.length > 0 ? (
-                    news.map((item, idx) => (
-                        <div key={idx} className="news-item" style={{ animation: `fadeIn 0.3s ease-out ${idx * 0.05}s both` }}>
-                            <div className="news-header">
-                                <span className="source-tag">
-                                    {item.source || (item.url ? new URL(item.url).hostname.replace('www.', '') : 'Unknown')}
-                                </span>
-                                <span className="time-tag">
-                                    <Clock size={10} />
-                                    {item.time ? new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-                                </span>
+                    news.map((item, idx) => {
+                        const newsDetail = item.raw_score || item;
+                        const sentimentScore = newsDetail.sentiment_score || 0;
+                        const sentimentLabel = newsDetail.sentiment_label || 'Neutral';
+                        const relevanceScore = newsDetail.relevance_score || 0;
+                        const content = newsDetail.content || '';
+                        const snippet = content.substring(0, 150) + (content.length > 150 ? '...' : '');
+
+                        return (
+                            <div
+                                key={idx}
+                                className="news-item"
+                                style={{
+                                    animation: `fadeIn 0.3s ease-out ${idx * 0.05}s both`,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onClick={() => openNewsModal(item)}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                }}
+                            >
+                                <div className="news-header">
+                                    <span className="source-tag">
+                                        {item.source || (item.url ? new URL(item.url).hostname.replace('www.', '') : 'Unknown')}
+                                    </span>
+                                    <span className="time-tag">
+                                        <Clock size={10} />
+                                        {formatNewsTime(newsDetail.published_at || item.time)}
+                                    </span>
+                                </div>
+
+                                <div className="news-title" style={{
+                                    color: isDark ? '#FFC107' : '#F57C00',
+                                    fontWeight: 'bold',
+                                    marginBottom: '8px'
+                                }}>
+                                    {item.title}
+                                </div>
+
+                                {/* Content Snippet */}
+                                {snippet && (
+                                    <div style={{
+                                        fontSize: '12px',
+                                        color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)',
+                                        marginBottom: '8px',
+                                        lineHeight: '1.4'
+                                    }}>
+                                        {snippet}
+                                    </div>
+                                )}
+
+                                {/* Sentiment & Relevance Badges */}
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+                                    {/* Sentiment Badge */}
+                                    <span style={{
+                                        display: 'inline-block',
+                                        padding: '3px 8px',
+                                        borderRadius: '12px',
+                                        fontSize: '10px',
+                                        fontWeight: 'bold',
+                                        backgroundColor: sentimentScore > 0.3
+                                            ? 'rgba(76, 175, 80, 0.2)'
+                                            : (sentimentScore < -0.3 ? 'rgba(244, 67, 54, 0.2)' : 'rgba(33, 150, 243, 0.2)'),
+                                        color: sentimentScore > 0.3
+                                            ? '#4CAF50'
+                                            : (sentimentScore < -0.3 ? '#F44336' : '#2196F3')
+                                    }}>
+                                        {sentimentLabel} ({(sentimentScore * 100).toFixed(0)}%)
+                                    </span>
+
+                                    {/* Relevance Badge */}
+                                    {relevanceScore > 0 && (
+                                        <span style={{
+                                            display: 'inline-block',
+                                            padding: '3px 8px',
+                                            borderRadius: '12px',
+                                            fontSize: '10px',
+                                            fontWeight: 'bold',
+                                            backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.3)',
+                                            color: '#9C27B0'
+                                        }}>
+                                            🎯 {(relevanceScore * 100).toFixed(0)}%
+                                        </span>
+                                    )}
+
+                                    {item.symbol && <span className="symbol-tag">{item.symbol}</span>}
+                                </div>
                             </div>
-                            <a href={item.url} target="_blank" rel="noreferrer" className="news-title">
-                                {item.title}
-                            </a>
-                            {item.symbol && <span className="symbol-tag">{item.symbol}</span>}
-                        </div>
-                    ))
+                        );
+                    })
                 ) : (
                     <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
                         Không có tin tức nào ở trang này.
@@ -162,7 +256,228 @@ export default function NewsList() {
                     Sau &gt;
                 </button>
             </div>
+
+            {/* News Detail Modal - Reuse same modal from MultiTimeframeChart */}
+            {modalOpen && selectedNews && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                        padding: '20px'
+                    }}
+                    onClick={() => setModalOpen(false)}
+                >
+                    <div
+                        style={{
+                            backgroundColor: isDark ? '#1a1e2e' : '#ffffff',
+                            borderRadius: '12px',
+                            maxWidth: '700px',
+                            width: '100%',
+                            maxHeight: '80vh',
+                            overflow: 'auto',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+                            position: 'relative'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Close Button */}
+                        <button
+                            onClick={() => setModalOpen(false)}
+                            style={{
+                                position: 'absolute',
+                                top: '16px',
+                                right: '16px',
+                                background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '36px',
+                                height: '36px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '20px',
+                                color: isDark ? '#fff' : '#333',
+                                transition: 'all 0.2s',
+                                zIndex: 1
+                            }}
+                            onMouseEnter={(e) => {
+                                e.target.style.background = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.target.style.background = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+                            }}
+                        >
+                            ✕
+                        </button>
+
+                        {/* Modal Content */}
+                        <div style={{ padding: '32px' }}>
+                            {(() => {
+                                const newsDetail = selectedNews.raw_score || selectedNews;
+                                const sentimentScore = newsDetail.sentiment_score || 0;
+
+                                return (
+                                    <>
+                                        {/* Sentiment Badge */}
+                                        <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                            <span style={{
+                                                display: 'inline-block',
+                                                padding: '6px 12px',
+                                                borderRadius: '20px',
+                                                fontSize: '12px',
+                                                fontWeight: 'bold',
+                                                backgroundColor: sentimentScore > 0.3
+                                                    ? 'rgba(76, 175, 80, 0.2)'
+                                                    : (sentimentScore < -0.3 ? 'rgba(244, 67, 54, 0.2)' : 'rgba(33, 150, 243, 0.2)'),
+                                                color: sentimentScore > 0.3
+                                                    ? '#4CAF50'
+                                                    : (sentimentScore < -0.3 ? '#F44336' : '#2196F3')
+                                            }}>
+                                                {sentimentScore > 0.3 ? '📈 Tích cực' : (sentimentScore < -0.3 ? '📉 Tiêu cực' : '➖ Trung lập')}
+                                                {' '}
+                                                ({(sentimentScore * 100).toFixed(1)}%)
+                                            </span>
+
+                                            {newsDetail.category && (
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    padding: '6px 12px',
+                                                    borderRadius: '20px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 'bold',
+                                                    backgroundColor: isDark ? 'rgba(255, 193, 7, 0.2)' : 'rgba(255, 193, 7, 0.3)',
+                                                    color: isDark ? '#FFC107' : '#F57C00'
+                                                }}>
+                                                    📂 {newsDetail.category}
+                                                </span>
+                                            )}
+
+                                            {newsDetail.relevance_score !== undefined && (
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    padding: '6px 12px',
+                                                    borderRadius: '20px',
+                                                    fontSize: '12px',
+                                                    fontWeight: 'bold',
+                                                    backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.3)',
+                                                    color: '#9C27B0'
+                                                }}>
+                                                    🎯 Relevance: {(newsDetail.relevance_score * 100).toFixed(0)}%
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {/* Title */}
+                                        <h2 style={{
+                                            margin: '0 0 16px 0',
+                                            fontSize: '24px',
+                                            fontWeight: 'bold',
+                                            color: isDark ? '#FFC107' : '#F57C00',
+                                            lineHeight: '1.4',
+                                            paddingRight: '40px'
+                                        }}>
+                                            {newsDetail.title || 'Không có tiêu đề'}
+                                        </h2>
+
+                                        {/* Meta Info */}
+                                        <div style={{
+                                            display: 'flex',
+                                            gap: '16px',
+                                            marginBottom: '16px',
+                                            fontSize: '14px',
+                                            color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',
+                                            flexWrap: 'wrap'
+                                        }}>
+                                            <div>
+                                                <strong>📍 Nguồn:</strong> {newsDetail.source || 'Unknown'}
+                                            </div>
+                                            <div>
+                                                <strong>🕒 Thời gian:</strong> {(() => { const d = new Date(newsDetail.published_at || newsDetail.time || selectedNews.time); return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString('vi-VN'); })()}
+                                            </div>
+                                        </div>
+
+                                        {/* Symbols */}
+                                        {newsDetail.symbols && newsDetail.symbols.length > 0 && (
+                                            <div style={{
+                                                marginBottom: '16px',
+                                                fontSize: '13px',
+                                                color: isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)'
+                                            }}>
+                                                <strong>💱 Symbols:</strong> {newsDetail.symbols.join(', ')}
+                                            </div>
+                                        )}
+
+                                        {/* Divider */}
+                                        <div style={{
+                                            height: '1px',
+                                            background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                            margin: '24px 0'
+                                        }} />
+
+                                        {/* Content */}
+                                        {newsDetail.content && (
+                                            <div style={{
+                                                fontSize: '15px',
+                                                lineHeight: '1.8',
+                                                color: isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)',
+                                                marginBottom: '24px',
+                                                maxHeight: '400px',
+                                                overflowY: 'auto',
+                                                paddingRight: '8px'
+                                            }}>
+                                                {newsDetail.content}
+                                            </div>
+                                        )}
+
+                                        {/* Link to Original Article */}
+                                        {newsDetail.url && (
+                                            <a
+                                                href={newsDetail.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{
+                                                    display: 'inline-block',
+                                                    padding: '12px 24px',
+                                                    backgroundColor: isDark ? '#2196F3' : '#1976D2',
+                                                    color: '#fff',
+                                                    textDecoration: 'none',
+                                                    borderRadius: '6px',
+                                                    fontWeight: 'bold',
+                                                    fontSize: '14px',
+                                                    transition: 'all 0.2s',
+                                                    boxShadow: '0 2px 8px rgba(33, 150, 243, 0.3)'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.target.style.backgroundColor = isDark ? '#1976D2' : '#1565C0';
+                                                    e.target.style.transform = 'translateY(-2px)';
+                                                    e.target.style.boxShadow = '0 4px 12px rgba(33, 150, 243, 0.4)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.target.style.backgroundColor = isDark ? '#2196F3' : '#1976D2';
+                                                    e.target.style.transform = 'translateY(0)';
+                                                    e.target.style.boxShadow = '0 2px 8px rgba(33, 150, 243, 0.3)';
+                                                }}
+                                            >
+                                                🔗 Đọc bài viết đầy đủ
+                                            </a>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
-
