@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart } from 'lightweight-charts';
 import useStore from '../store';
-import { calculateSMA, calculateEMA, calculateBollingerBands } from '../utils/technicalIndicators';
+import { calculateSMA, calculateEMA, calculateBollingerBands, calculateRSI, calculateMACD } from '../utils/technicalIndicators';
 
 export default function AdvancedChart() {
     const chartContainerRef = useRef();
@@ -18,6 +18,12 @@ export default function AdvancedChart() {
     const bbMiddleSeriesRef = useRef();
     const bbLowerSeriesRef = useRef();
 
+    // RSI and MACD Series
+    const rsiSeriesRef = useRef();
+    const macdLineSeriesRef = useRef();
+    const macdSignalSeriesRef = useRef();
+    const macdHistogramSeriesRef = useRef();
+
     // News markers
     const newsMarkersRef = useRef([]);
 
@@ -31,7 +37,9 @@ export default function AdvancedChart() {
         sma20: true,
         ema12: true,
         ema26: true,
-        bb: false
+        bb: false,
+        rsi: false,
+        macd: false
     });
 
     const loadingRef = useRef(false);
@@ -143,6 +151,70 @@ export default function AdvancedChart() {
             visible: indicators.bb
         });
 
+        // RSI (Relative Strength Index) - separate scale
+        const rsiSeries = chart.addLineSeries({
+            color: '#FF9800',
+            lineWidth: 2,
+            title: 'RSI',
+            visible: indicators.rsi,
+            priceScaleId: 'rsi',
+            priceFormat: {
+                type: 'price',
+                precision: 2,
+                minMove: 0.01,
+            }
+        });
+
+        // Configure RSI scale (0-100)
+        chart.priceScale('rsi').applyOptions({
+            scaleMargins: {
+                top: 0.85,
+                bottom: 0,
+            },
+            borderColor: '#2B2B43',
+        });
+
+        // MACD - separate scale (render histogram first, then lines on top)
+        const macdHistogramSeries = chart.addHistogramSeries({
+            title: 'MACD Histogram',
+            visible: indicators.macd,
+            priceScaleId: 'macd',
+            priceFormat: {
+                type: 'price',
+                precision: 2,
+            },
+            lastValueVisible: false
+        });
+
+        const macdLineSeries = chart.addLineSeries({
+            color: '#00BCD4',  // Cyan for MACD line - very distinct
+            lineWidth: 3,      // Thicker line
+            title: 'MACD',
+            visible: indicators.macd,
+            priceScaleId: 'macd',
+            lastValueVisible: true,
+            priceLineVisible: false
+        });
+
+        const macdSignalSeries = chart.addLineSeries({
+            color: '#FF9800',  // Orange for Signal line - very distinct
+            lineWidth: 3,      // Thicker line
+            title: 'Signal',
+            visible: indicators.macd,
+            priceScaleId: 'macd',
+            lastValueVisible: true,
+            priceLineVisible: false
+        });
+
+        // Configure MACD scale
+        chart.priceScale('macd').applyOptions({
+            scaleMargins: {
+                top: 0.9,
+                bottom: 0,
+            },
+            borderColor: '#2B2B43',
+        });
+
         chartRef.current = chart;
         candleSeriesRef.current = candlestickSeries;
         volumeSeriesRef.current = volumeSeries;
@@ -152,6 +224,10 @@ export default function AdvancedChart() {
         bbUpperSeriesRef.current = bbUpperSeries;
         bbMiddleSeriesRef.current = bbMiddleSeries;
         bbLowerSeriesRef.current = bbLowerSeries;
+        rsiSeriesRef.current = rsiSeries;
+        macdLineSeriesRef.current = macdLineSeries;
+        macdSignalSeriesRef.current = macdSignalSeries;
+        macdHistogramSeriesRef.current = macdHistogramSeries;
 
         // Crosshair move event
         chart.subscribeCrosshairMove(param => {
@@ -233,6 +309,14 @@ export default function AdvancedChart() {
             bbUpperSeriesRef.current.applyOptions({ visible: indicators.bb });
             bbMiddleSeriesRef.current.applyOptions({ visible: indicators.bb });
             bbLowerSeriesRef.current.applyOptions({ visible: indicators.bb });
+        }
+        if (rsiSeriesRef.current) {
+            rsiSeriesRef.current.applyOptions({ visible: indicators.rsi });
+        }
+        if (macdLineSeriesRef.current && macdSignalSeriesRef.current && macdHistogramSeriesRef.current) {
+            macdLineSeriesRef.current.applyOptions({ visible: indicators.macd });
+            macdSignalSeriesRef.current.applyOptions({ visible: indicators.macd });
+            macdHistogramSeriesRef.current.applyOptions({ visible: indicators.macd });
         }
     }, [indicators]);
 
@@ -361,6 +445,20 @@ export default function AdvancedChart() {
                 bbUpperSeriesRef.current.setData(bbData.upper);
                 bbMiddleSeriesRef.current.setData(bbData.middle);
                 bbLowerSeriesRef.current.setData(bbData.lower);
+            }
+
+            // Calculate and set RSI
+            if (indicators.rsi && rsiSeriesRef.current) {
+                const rsiData = calculateRSI(data, 14);
+                rsiSeriesRef.current.setData(rsiData);
+            }
+
+            // Calculate and set MACD
+            if (indicators.macd && macdLineSeriesRef.current && macdSignalSeriesRef.current && macdHistogramSeriesRef.current) {
+                const macdData = calculateMACD(data, 12, 26, 9);
+                macdLineSeriesRef.current.setData(macdData.macd);
+                macdSignalSeriesRef.current.setData(macdData.signal);
+                macdHistogramSeriesRef.current.setData(macdData.histogram);
             }
 
             if (oldestTimeRef.current === null || data[0].time < oldestTimeRef.current) {
@@ -529,6 +627,36 @@ export default function AdvancedChart() {
                 >
                     BB
                 </button>
+                <button
+                    onClick={() => toggleIndicator('rsi')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.rsi ? '#FF9800' : 'rgba(255, 255, 255, 0.1)',
+                        color: '#fff',
+                        fontWeight: indicators.rsi ? 'bold' : 'normal'
+                    }}
+                >
+                    RSI
+                </button>
+                <button
+                    onClick={() => toggleIndicator('macd')}
+                    style={{
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        backgroundColor: indicators.macd ? '#2196F3' : 'rgba(255, 255, 255, 0.1)',
+                        color: '#fff',
+                        fontWeight: indicators.macd ? 'bold' : 'normal'
+                    }}
+                >
+                    MACD
+                </button>
             </div>
 
             {/* News Legend */}
@@ -544,7 +672,7 @@ export default function AdvancedChart() {
                 fontSize: '11px',
                 color: '#d1d4dc'
             }}>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {/* <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <span style={{ fontWeight: 'bold' }}>Tin tức:</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4CAF50' }}></div>
@@ -559,7 +687,7 @@ export default function AdvancedChart() {
                         <span>Tiêu cực</span>
                     </div>
                     <span style={{ marginLeft: '8px', opacity: 0.7 }}>({newsData.length} sự kiện)</span>
-                </div>
+                </div> */}
             </div>
 
             <div ref={chartContainerRef} style={{ width: '100%', height: '100%', position: 'relative', zIndex: 10 }} />

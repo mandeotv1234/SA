@@ -65,7 +65,7 @@ const AdminDashboard = () => {
                         successMsg = 'Đã nâng cấp VIP thành công!';
                     } else if (action === 'demote_regular') {
                         url = `/admin/users/${userId}/role`;
-                        body = { role: 'Regular' };
+                        body = { role: 'user' };
                         successMsg = 'Đã hạ xuống tài khoản thường!';
                     } else if (action === 'ban') {
                         url = `/admin/users/${userId}/status`;
@@ -162,7 +162,7 @@ const AdminDashboard = () => {
                                                         <>
                                                             {u.status !== 'Banned' && u.status !== 'Locked' && (
                                                                 <>
-                                                                    {u.role === 'Regular' && (
+                                                                    {!u.is_vip && (
                                                                         <button
                                                                             className="btn-action btn-vip"
                                                                             onClick={() => handleAction(u.id, 'promote_vip', `Bạn có chắc chắn muốn nâng cấp VIP cho ${u.email}?`, 'success')}
@@ -171,7 +171,7 @@ const AdminDashboard = () => {
                                                                             <ArrowUpCircle size={14} /> VIP
                                                                         </button>
                                                                     )}
-                                                                    {u.role === 'VIP' && (
+                                                                    {u.is_vip && (
                                                                         <button
                                                                             className="btn-action btn-regular"
                                                                             onClick={() => handleAction(u.id, 'demote_regular', `Bạn có chắc chắn muốn hạ cấp ${u.email} xuống thường?`, 'info')}

@@ -18,8 +18,30 @@ const flushBufferToDB = async () => {
 
   const client = await db.pool.connect();
   try {
+    // Step 1: Check for existing URLs to prevent duplicates
+    const urls = currentBatch.map(item => item.url);
+    const checkQuery = `
+      SELECT DISTINCT url FROM news_sentiment 
+      WHERE url = ANY($1::text[])
+    `;
+    const existingResult = await client.query(checkQuery, [urls]);
+    const existingUrls = new Set(existingResult.rows.map(row => row.url));
+
+    // Step 2: Filter out duplicates
+    const newItems = currentBatch.filter(item => !existingUrls.has(item.url));
+
+    if (newItems.length === 0) {
+      console.log(`[NewsConsumer] Skipped ${currentBatch.length} duplicate news items`);
+      return;
+    }
+
+    if (newItems.length < currentBatch.length) {
+      console.log(`[NewsConsumer] Filtered ${currentBatch.length - newItems.length} duplicates, inserting ${newItems.length} new items`);
+    }
+
+    // Step 3: Insert only new items
     const values = [];
-    const placeholders = currentBatch.map((item, index) => {
+    const placeholders = newItems.map((item, index) => {
       const i = index * 6;
       // time, url, source, title, sentiment_score, raw_score
       values.push(item.time);
@@ -34,10 +56,11 @@ const flushBufferToDB = async () => {
     const queryText = `
       INSERT INTO news_sentiment (time, url, source, title, sentiment_score, raw_score)
       VALUES ${placeholders}
-      ON CONFLICT DO NOTHING;
+      ON CONFLICT (time, url) DO NOTHING;
     `;
 
-    await client.query(queryText, values);
+    const result = await client.query(queryText, values);
+    console.log(`[NewsConsumer] Inserted ${result.rowCount || newItems.length} news items`);
   } catch (err) {
     console.error('Error inserting news_sentiment batch:', err);
     // requeue
