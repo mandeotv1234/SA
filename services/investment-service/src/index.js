@@ -82,31 +82,19 @@ async function getCurrentPrice(symbol) {
     }
 }
 
-// Get latest AI prediction from Kafka topic
-let latestAIPrediction = null;
-
+// Kafka consumer for investment analysis results
 async function consumeKafkaTopics() {
     await consumer.connect();
-    // Subscribe to multiple topics
-    await consumer.subscribe({ topics: ['ai_insights', 'investment.analysis.result'], fromBeginning: true });
+    // Subscribe only to investment analysis results
+    await consumer.subscribe({ topics: ['investment.analysis.result'], fromBeginning: true });
 
     await consumer.run({
         eachMessage: async ({ topic, partition, message }) => {
             try {
                 const payload = JSON.parse(message.value.toString());
 
-                if (topic === 'ai_insights') {
-                    if (payload.type === 'aggregated_prediction') {
-                        // Only update if we have valid predictions
-                        if (payload.predictions && Array.isArray(payload.predictions) && payload.predictions.length > 0) {
-                            latestAIPrediction = payload;
-                            console.log(`[KAFKA] Received AI prediction update (${payload.predictions.length} symbols)`);
-                        } else {
-                            console.warn('[KAFKA] Received empty AI prediction, ignoring update');
-                        }
-                    }
-                } else if (topic === 'investment.analysis.result') {
-                    // Handle analysis result
+                if (topic === 'investment.analysis.result') {
+                    // Handle analysis result from AI service
                     const requestId = payload.requestId;
                     if (requestId && pendingAnalysisRequests.has(requestId)) {
                         const { resolve, timeout } = pendingAnalysisRequests.get(requestId);
@@ -123,50 +111,47 @@ async function consumeKafkaTopics() {
     });
 }
 
-// Fetch latest prediction from Core Service (Warmup/Fallback)
-async function fetchLatestPredictionFromCore() {
+// Fetch latest prediction for a specific symbol from Core Service
+async function fetchPredictionForSymbol(symbol) {
     try {
-        // Correct endpoint for core-service
-        const url = 'http://core-service:3000/v1/insights/internal?type=aggregated_prediction&limit=1';
+        // Query for latest prediction of this specific symbol
+        const url = `http://core-service:3000/v1/insights/internal?type=aggregated_prediction&limit=10`;
         const res = await axios.get(url);
+
         if (res.data && res.data.rows && res.data.rows.length > 0) {
-            const row = res.data.rows[0];
-            if (row.payload && row.payload.predictions && row.payload.predictions.length > 0) {
-                latestAIPrediction = row.payload;
-                console.log(`[WARMUP] Loaded latest prediction from Core Service (${row.payload.predictions.length} symbols)`);
-            } else {
-                console.warn('[WARMUP] Latest prediction from Core Service is empty or invalid, skipping update');
+            // Find the most recent prediction for this symbol
+            for (const row of res.data.rows) {
+                if (row.payload && row.payload.predictions && Array.isArray(row.payload.predictions)) {
+                    const pred = row.payload.predictions.find(p => p.symbol === symbol);
+                    if (pred) {
+                        console.log(`[AI-FETCH] Found prediction for ${symbol} from ${row.time}`);
+                        return pred;
+                    }
+                }
             }
+            console.warn(`[AI-FETCH] No prediction found for ${symbol} in last 10 predictions`);
+            return null;
         }
+
+        console.warn('[AI-FETCH] No predictions available in database');
+        return null;
     } catch (e) {
-        console.error('[WARMUP ERROR] Failed to fetch from core-service:', e.message);
+        console.error(`[AI-FETCH ERROR] Failed to fetch prediction for ${symbol}:`, e.message);
+        return null;
     }
 }
 
 // Get AI prediction for specific symbol
 async function getAIPredictionForSymbol(symbol) {
-    // Check if we need to fetch/refetch data
-    if (!latestAIPrediction || !latestAIPrediction.predictions || latestAIPrediction.predictions.length === 0) {
-        console.log('[AI] Current prediction data is missing or empty. Fetching from Core Service...');
-        await fetchLatestPredictionFromCore();
+    // Always fetch fresh prediction from database for the requested symbol
+    const pred = await fetchPredictionForSymbol(symbol);
 
-        if (!latestAIPrediction || !latestAIPrediction.predictions || latestAIPrediction.predictions.length === 0) {
-            console.warn('[AI] No valid prediction data available even after fetch');
-            return null;
-        }
-    }
-
-    // Check if predictions array is empty (double check)
-    if (!Array.isArray(latestAIPrediction.predictions) || latestAIPrediction.predictions.length === 0) {
-        console.warn('[AI] Predictions array is empty - AI service is still processing');
+    if (!pred) {
+        console.warn(`[AI] No prediction found for ${symbol} in database`);
         return null;
     }
 
-    const pred = latestAIPrediction.predictions.find(p => p.symbol === symbol);
-    if (!pred) {
-        console.warn(`[AI] No prediction found for ${symbol} in ${latestAIPrediction.predictions.length} available predictions`);
-    }
-    return pred || null;
+    return pred;
 }
 
 // Helper: Perform Investment Analysis Logic
@@ -276,9 +261,9 @@ app.post('/v1/investments/analyze', async (req, res) => {
     } catch (err) {
         if (err.message === 'AI_SERVICE_UNAVAILABLE') {
             return res.status(503).json({
-                error: 'Hệ thống AI đang khởi động. Vui lòng thử lại sau 1-2 phút.',
+                error: `Chưa có dự đoán AI cho ${symbol}. Vui lòng thử lại sau.`,
                 error_code: 'AI_SERVICE_UNAVAILABLE',
-                details: 'AI service is processing market data. Please wait a moment and try again.'
+                details: 'No AI prediction available for this symbol yet. Please try again later.'
             });
         }
         res.status(500).json({ error: err.message });
@@ -621,7 +606,6 @@ const PORT = process.env.PORT || 8001;
 server.listen(PORT, async () => {
     await initDB();
     await producer.connect();
-    await fetchLatestPredictionFromCore(); // Warmup
     await consumeKafkaTopics();
     console.log(`[INVESTMENT SERVICE] Running on port ${PORT}`);
     console.log(`[WEBSOCKET] Ready for connections`);

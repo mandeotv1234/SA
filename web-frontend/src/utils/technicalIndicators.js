@@ -178,8 +178,35 @@ export function calculateMACD(data, fastPeriod = 12, slowPeriod = 26, signalPeri
         });
     }
 
-    // Calculate signal line (EMA of MACD)
-    const signalLine = calculateEMA(macdLine, signalPeriod);
+    // Calculate signal line (EMA of MACD line)
+    // We need to calculate EMA manually since macdLine has 'value' not 'close'
+    const signalLine = [];
+    if (macdLine.length < signalPeriod) {
+        return { macd: macdLine, signal: [], histogram: [] };
+    }
+
+    const multiplier = 2 / (signalPeriod + 1);
+
+    // Start with SMA for first signal value
+    let sum = 0;
+    for (let i = 0; i < signalPeriod; i++) {
+        sum += macdLine[i].value;
+    }
+    let ema = sum / signalPeriod;
+
+    signalLine.push({
+        time: macdLine[signalPeriod - 1].time,
+        value: ema
+    });
+
+    // Calculate EMA for remaining values
+    for (let i = signalPeriod; i < macdLine.length; i++) {
+        ema = (macdLine[i].value - ema) * multiplier + ema;
+        signalLine.push({
+            time: macdLine[i].time,
+            value: ema
+        });
+    }
 
     // Calculate histogram
     const histogram = [];

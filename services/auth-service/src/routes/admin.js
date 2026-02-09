@@ -49,17 +49,24 @@ router.get('/users', async (req, res) => {
 // Change user role
 router.post('/users/:id/role', async (req, res) => {
     const { id } = req.params;
-    const { role } = req.body; // 'Regular', 'VIP'
-
-    if (!['Regular', 'VIP'].includes(role)) {
-        return res.status(400).json({ error: 'invalid_role', message: 'Role must be Regular or VIP' });
+    const { role } = req.body;
+    // Normalize role
+    let normalizedRole = role;
+    if (['Regular', 'Standard', 'user'].includes(role)) {
+        normalizedRole = 'user';
+    } else if (role === 'VIP') {
+        normalizedRole = 'VIP';
+    } else {
+        return res.status(400).json({ error: 'invalid_role', message: 'Role must be user (or Regular) or VIP' });
     }
 
     try {
-        const isVip = role === 'VIP';
+        const isVip = normalizedRole === 'VIP';
+        console.log(`[Admin] Updating user ${id} role to ${normalizedRole} (is_vip=${isVip})`);
+
         await pool.query(
             'UPDATE users SET role = $1, is_vip = $2 WHERE id = $3',
-            [role, isVip, id]
+            [normalizedRole, isVip, id]
         );
 
         AuditLogger.logSecurityEvent('ADMIN_UPDATE_ROLE', 'INFO', {

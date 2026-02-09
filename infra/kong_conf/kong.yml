@@ -19,9 +19,6 @@ services:
       - name: api-route
         paths: ["/api"]
         strip_path: true
-      - name: backtest-route
-        paths: ["/v1/backtest"]
-        strip_path: false
     plugins:
       - name: jwt
         config:
