@@ -66,6 +66,48 @@ services:
       timeout: 5s
       retries: 5
 
+  backtest-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev123
+      POSTGRES_DB: backtest_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - backtest_data:/var/lib/postgresql/data
+      - ./services/backtest-service/src/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U dev -d backtest_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backtest-service:
+    build:
+      context: ./services/backtest-service
+    environment:
+      DB_HOST: backtest-db
+      DB_PORT: 5432
+      DB_NAME: backtest_db
+      DB_USER: dev
+      DB_PASSWORD: dev123
+      TIMESCALE_HOST: timescaledb
+      PORT: 8005
+    depends_on:
+      backtest-db:
+        condition: service_healthy
+    volumes:
+      - ./services/backtest-service:/app
+      - /app/node_modules
+    networks:
+      - default
+
   haproxy:
     image: haproxy:2.8
     container_name: haproxy
@@ -501,6 +543,8 @@ volumes:
   investment_pgdata:
     driver: local
   notification_pgdata:
+    driver: local
+  backtest_data:
     driver: local
 
 networks:

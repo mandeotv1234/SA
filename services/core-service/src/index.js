@@ -4,7 +4,6 @@ const cors = require('cors');
 const marketRoutes = require('./routes/marketRoutes');
 const newsRoutes = require('./routes/newsRoutes');
 const insightRoutes = require('./routes/insightRoutes');
-const backtestRoutes = require('./routes/backtestRoutes');
 const startMarketConsumer = require('./consumers/MarketDataConsumer');
 const startNewsConsumer = require('./consumers/NewsAnalyzedConsumer');
 const startAiInsightsConsumer = require('./consumers/AiInsightsConsumer');
@@ -21,7 +20,6 @@ app.use(express.json());
 app.use('/v1', marketRoutes);          // /v1/klines
 app.use('/v1/news', newsRoutes);       // /v1/news
 app.use('/v1/insights', insightRoutes);// /v1/insights
-app.use('/v1/backtest', backtestRoutes); // /v1/backtest
 
 // Health Check
 app.get('/health', (req, res) => {

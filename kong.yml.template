@@ -19,10 +19,21 @@ services:
       - name: api-route
         paths: ["/api"]
         strip_path: true
+      - name: insights-route
+        paths: ["/v1/insights"]
+        strip_path: false
     plugins:
       - name: jwt
         config:
           claims_to_verify: ["exp"]
+
+  # Internal route for microservice-to-microservice communication (no JWT)
+  - name: core-service-internal
+    url: "http://core-service:3000"
+    routes:
+      - name: internal-insights-route
+        paths: ["/internal"]
+        strip_path: true  # Removes /internal prefix, forwards rest to core-service
 
   - name: stream-service
     url: "http://haproxy:8005"
@@ -95,6 +106,17 @@ services:
       - name: payment-webhook-route
         paths: ["/payment-webhook"]
         strip_path: true
+
+  - name: backtest-service
+    url: "http://backtest-service:8005"
+    routes:
+      - name: backtest-api-route
+        paths: ["/backtest-api"]
+        strip_path: true
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
 
 consumers:
   - username: shared-auth-consumer
