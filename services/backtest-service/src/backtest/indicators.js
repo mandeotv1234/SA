@@ -41,6 +41,7 @@ class TechnicalIndicators {
 
     /**
      * Calculate MACD (Moving Average Convergence Divergence)
+     * FIXED: Proper signal line calculation using EMA of MACD values
      * @param {Array} candles - Array of candle objects
      * @param {number} fastPeriod - Fast EMA period (default: 12)
      * @param {number} slowPeriod - Slow EMA period (default: 26)
@@ -56,9 +57,26 @@ class TechnicalIndicators {
         const ema26 = this.calculateEMA(candles, slowPeriod);
         const macdLine = ema12 - ema26;
 
-        // For signal line, we'd need to calculate EMA of MACD values
-        // Simplified: return MACD line only
-        const signalLine = macdLine * 0.9; // Approximation
+        // FIX: Calculate proper signal line as EMA of MACD values
+        // Need to calculate MACD for all candles first, then EMA of those values
+        const macdValues = [];
+        for (let i = slowPeriod - 1; i < candles.length; i++) {
+            const subset = candles.slice(0, i + 1);
+            const fast = this.calculateEMA(subset, fastPeriod);
+            const slow = this.calculateEMA(subset, slowPeriod);
+            macdValues.push(fast - slow);
+        }
+
+        // Calculate EMA of MACD values for signal line
+        let signalLine = macdLine; // Default fallback
+        if (macdValues.length >= signalPeriod) {
+            const k = 2 / (signalPeriod + 1);
+            signalLine = macdValues[0];
+            for (let i = 1; i < macdValues.length; i++) {
+                signalLine = macdValues[i] * k + signalLine * (1 - k);
+            }
+        }
+
         const histogram = macdLine - signalLine;
 
         return { macdLine, signalLine, histogram };

@@ -21,7 +21,15 @@ const TIMEFRAMES = [
 ];
 
 export default function StrategyBuilder({ onRunBacktest, isLoading }) {
-    const [strategyName, setStrategyName] = useState('My AI Strategy');
+    // Generate default name with timestamp
+    const getDefaultStrategyName = () => {
+        const now = new Date();
+        const date = now.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-');
+        const time = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }).replace(/:/g, 'h');
+        return `My AI Strategy ${date} ${time}`;
+    };
+
+    const [strategyName, setStrategyName] = useState(getDefaultStrategyName());
     const [conditions, setConditions] = useState([
         { type: 'indicator', name: 'RSI', operator: '<', value: 30 }
     ]);

@@ -59,10 +59,18 @@ class StrategyParser {
         } else if (type === 'price') {
             actualValue = context.currentPrice;
         } else if (type === 'news') {
-            if (!context.news || context.news.length === 0) return false;
+            if (!context.news || context.news.length === 0) {
+                console.log('[STRATEGY] No news data available');
+                return false;
+            }
             // Aggregate news sentiment
             const avgSentiment = context.news.reduce((sum, n) => sum + (n.sentiment_score || 0), 0) / context.news.length;
             actualValue = avgSentiment;
+
+            // Debug logging
+            if (context.news.length > 0) {
+                console.log(`[STRATEGY] News count: ${context.news.length}, Avg sentiment: ${avgSentiment.toFixed(4)}, Condition: ${operator} ${value}`);
+            }
         } else {
             return false;
         }
@@ -72,7 +80,14 @@ class StrategyParser {
         }
 
         // Evaluate operator
-        return this.evaluateOperator(actualValue, operator, value);
+        const result = this.evaluateOperator(actualValue, operator, value);
+
+        // Debug logging for news conditions
+        if (type === 'news') {
+            console.log(`[STRATEGY] News condition result: ${actualValue.toFixed(4)} ${operator} ${value} = ${result}`);
+        }
+
+        return result;
     }
 
     /**
@@ -93,27 +108,48 @@ class StrategyParser {
      * @returns {boolean} Result
      */
     static evaluateOperator(actual, operator, expected) {
+        // Try numeric comparison first
+        const numActual = Number(actual);
+        const numExpected = Number(expected);
+
+        // If both can be converted to valid numbers, use numeric comparison
+        if (!isNaN(numActual) && !isNaN(numExpected)) {
+            switch (operator) {
+                case '>':
+                    return numActual > numExpected;
+                case '<':
+                    return numActual < numExpected;
+                case '>=':
+                    return numActual >= numExpected;
+                case '<=':
+                    return numActual <= numExpected;
+                case '==':
+                case '=':
+                    return Math.abs(numActual - numExpected) < 0.0001; // Float comparison
+                case '!=':
+                    return Math.abs(numActual - numExpected) >= 0.0001;
+                case 'crosses_above':
+                    // Requires historical context - simplified for now
+                    return numActual > numExpected;
+                case 'crosses_below':
+                    return numActual < numExpected;
+                default:
+                    return false;
+            }
+        }
+
+        // Fallback to string comparison for non-numeric values
+        const act = String(actual).toUpperCase();
+        const exp = String(expected).toUpperCase();
+
         switch (operator) {
-            case '>':
-                return actual > expected;
-            case '<':
-                return actual < expected;
-            case '>=':
-                return actual >= expected;
-            case '<=':
-                return actual <= expected;
             case '==':
             case '=':
-                return Math.abs(actual - expected) < 0.0001; // Float comparison
+                return act === exp;
             case '!=':
-                return Math.abs(actual - expected) >= 0.0001;
-            case 'crosses_above':
-                // Requires historical context - simplified for now
-                return actual > expected;
-            case 'crosses_below':
-                return actual < expected;
+                return act !== exp;
             default:
-                return false;
+                return false; // >, < not supported for strings
         }
     }
 

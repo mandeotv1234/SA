@@ -54,8 +54,6 @@ class BacktestEngine {
             const indicators = TechnicalIndicators.calculateAll(recentCandles);
 
             // Find latest prediction available BEFORE or AT current time
-            // Optimize: Store index to avoid full scan? For now, simple findLast is okay for <10k items
-            // or filter subset. Since sorted, we can search backward from current index estimate.
             const prediction = this.getLatestPrediction(currentTime);
 
             // Get recent news (last 24h)
@@ -194,8 +192,6 @@ class BacktestEngine {
             profit = netValue - (pos.qty * pos.entry_price);
             returnPct = ((price - pos.entry_price) / pos.entry_price) * 100;
             this.currentCapital = this.currentCapital + profit;
-            // Note: currentCapital logic in simple backtests often assumes full compounding 
-            // or just PnL accumulation. Here we add PnL to balance.
         } else if (pos.type === 'short') {
             // Short: Profit = (Entry - Exit) * Qty
             // Exit Cost = Exit Price * Qty + Fee
@@ -223,11 +219,19 @@ class BacktestEngine {
         this.activePosition = null;
     }
 
+    /**
+     * Record equity at each time point
+     * FIXED: Include both current capital AND active position value
+     */
     recordEquity(time, currentPrice) {
         let equity = this.currentCapital;
+
+        // FIX: Add active position value to current capital
         if (this.activePosition) {
-            equity = (this.activePosition.qty * currentPrice); // Gross value
+            const positionValue = this.activePosition.qty * currentPrice;
+            equity = this.currentCapital + positionValue;
         }
+
         this.equityInterim.push({ time, value: equity });
     }
 

@@ -11,7 +11,7 @@ const fetchBinanceCandles = async (symbol, interval, startTime, endTime) => {
     let currentStart = new Date(startTime).getTime();
     const endTimestamp = new Date(endTime).getTime();
 
-    // Safety limit to prevent infinite loops (max ~20 requests for typical range)
+    // Safety limit to prevent infinite loops
     const MAX_REQUESTS = 50;
     let requests = 0;
 
@@ -19,7 +19,6 @@ const fetchBinanceCandles = async (symbol, interval, startTime, endTime) => {
 
     while (currentStart < endTimestamp && requests < MAX_REQUESTS) {
         try {
-            // Binance Limit: 1000 per request
             const url = `https://api.binance.com/api/v3/klines`;
             const params = {
                 symbol: symbol.toUpperCase(),
@@ -30,7 +29,7 @@ const fetchBinanceCandles = async (symbol, interval, startTime, endTime) => {
             };
 
             const res = await axios.get(url, { params });
-            const data = res.data; // [[time, open, high, low, close, vol, ...], ...]
+            const data = res.data;
 
             if (!data || data.length === 0) break;
 
@@ -45,34 +44,20 @@ const fetchBinanceCandles = async (symbol, interval, startTime, endTime) => {
 
             allCandles = allCandles.concat(candles);
 
-            // Next start time = close time of last candle + 1
-            const lastCloseTime = data[data.length - 1][6];
-            // Or simpler: last Open Time + 1 is risky if gap. 
-            // Binance returns Open Time at index 0.
             const lastOpenTime = data[data.length - 1][0];
-
             if (lastOpenTime >= endTimestamp) break;
 
-            // Move pointer forward (handling potential gaps by just adding 1ms to last received candle?)
-            // Robust way: last returned candle time + 1ms? No, + interval?
-            // Binance klines startTime includes the candle starting at that time.
-            // So next request should start at lastOpenTime + 1 (or + intervalMs).
-            // Actually, if we received N candles, the last one started at T.
-            // We want candles starting AFTER T.
             currentStart = lastOpenTime + 1;
-
             requests++;
-            // Small delay to be nice to API
-            await new Promise(r => setTimeout(r, 50));
+
+            // Rate limiting: wait 100ms between requests
+            await new Promise(r => setTimeout(r, 100));
         } catch (e) {
             console.error('[Backtest] Binance fetch error:', e.message);
-            // If error 429 (Rate Limit) -> break and return partial or throw
             break;
         }
     }
 
-    // Deduplicate if any overlap (though loop logic should prevent it)
-    // Optional
     return allCandles;
 };
 
@@ -80,7 +65,6 @@ const fetchBinanceCandles = async (symbol, interval, startTime, endTime) => {
 const resampleCandles = (candles, timeframe) => {
     if (!timeframe || timeframe === '1h') return candles;
 
-    // Map timeframe to milliseconds
     const timeMap = {
         '15m': 15 * 60 * 1000,
         '30m': 30 * 60 * 1000,
@@ -92,10 +76,7 @@ const resampleCandles = (candles, timeframe) => {
     };
 
     const intervalMs = timeMap[timeframe];
-    // Default DB data is 1h (market_klines). 
-    // We cannot resample 1h to 15m/30m accurately.
-    // If target is smaller than 1h, and we are relying on DB fallback, this is an issue.
-    // However, for now, let's just return empty or error to avoid misleading results.
+
     if (intervalMs < 60 * 60 * 1000) {
         console.warn(`[Backtest] Cannot resample 1h DB data to ${timeframe}. returning empty.`);
         return [];
@@ -108,7 +89,6 @@ const resampleCandles = (candles, timeframe) => {
 
     for (const candle of candles) {
         const candleTime = new Date(candle.time).getTime();
-        // Snap time to grid
         const bucketStartTime = Math.floor(candleTime / intervalMs) * intervalMs;
 
         if (!currentBucket || currentBucket.time !== bucketStartTime) {
@@ -117,7 +97,6 @@ const resampleCandles = (candles, timeframe) => {
                 resampled.push(currentBucket);
             }
 
-            // Start new bucket
             currentBucket = {
                 time: bucketStartTime,
                 open: Number(candle.open),
@@ -127,7 +106,6 @@ const resampleCandles = (candles, timeframe) => {
                 volume: Number(candle.volume)
             };
         } else {
-            // Aggregate
             currentBucket.high = Math.max(currentBucket.high, Number(candle.high));
             currentBucket.low = Math.min(currentBucket.low, Number(candle.low));
             currentBucket.close = Number(candle.close);
@@ -143,21 +121,18 @@ const resampleCandles = (candles, timeframe) => {
     return resampled;
 };
 
-// Middleware xác thực user (giả sử có middleware check header từ Kong hoặc tự decode)
+// Middleware: Auth
 const requireAuth = (req, res, next) => {
-    // 1. Check if X-User-Id already exists (maybe from internal call or if Kong works)
     const kongUserId = req.headers['x-user-id'];
     if (kongUserId) {
         req.userId = kongUserId;
         return next();
     }
 
-    // 2. Fallback: Parse Authorization Header
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
         try {
-            // Since Kong already validated the signature, decode is safe for identity
             const decoded = jwt.decode(token);
             if (decoded && decoded.sub) {
                 req.userId = decoded.sub;
@@ -171,7 +146,7 @@ const requireAuth = (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized: Missing User Identity' });
 };
 
-// GET /v1/backtest/history - Lấy danh sách backtest của user
+// GET /v1/backtest/history
 router.get('/history', requireAuth, async (req, res) => {
     try {
         const { rows } = await db.query(`
@@ -189,7 +164,7 @@ router.get('/history', requireAuth, async (req, res) => {
     }
 });
 
-// GET /v1/backtest/:id - Lấy chi tiết 1 backtest
+// GET /v1/backtest/:id
 router.get('/:id', requireAuth, async (req, res) => {
     try {
         const { rows } = await db.query(`
@@ -208,7 +183,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     }
 });
 
-// POST /v1/backtest/run - Chạy backtest mới
+// POST /v1/backtest/run
 router.post('/run', requireAuth, async (req, res) => {
     const { strategy, symbol, start_date, end_date, initial_capital } = req.body;
 
@@ -223,7 +198,7 @@ router.post('/run', requireAuth, async (req, res) => {
         let processedCandles = [];
         const timeframe = strategy.timeframe || '1h';
 
-        // A. Try Binance
+        // Try Binance first
         try {
             processedCandles = await fetchBinanceCandles(symbol, timeframe, start_date, end_date);
             if (processedCandles.length > 0) {
@@ -233,55 +208,115 @@ router.post('/run', requireAuth, async (req, res) => {
             console.warn('[Backtest] Binance fetch failed:', binanceErr.message);
         }
 
-        // B. Fallback to DB
+        // Fallback to TimescaleDB (market_klines table in timeseriesdb)
         if (processedCandles.length === 0) {
-            console.log('[Backtest] Fetching from DB (Fallback)...');
-            const candlesResult = await db.query(
-                `SELECT * FROM market_klines 
-               WHERE symbol = $1 AND time >= $2 AND time <= $3 ORDER BY time ASC`,
-                [symbol.toUpperCase(), start_date, end_date]
-            );
+            console.log('[Backtest] Fetching from TimescaleDB (Fallback)...');
 
-            // Resample DB data (assuming DB has 1h data)
-            processedCandles = resampleCandles(candlesResult.rows, timeframe);
-            console.log(`[Backtest] Loaded ${processedCandles.length} candles from DB (Resampled).`);
+            // Connect to TimescaleDB for market data
+            const { Pool } = require('pg');
+            const tsPool = new Pool({
+                host: process.env.TIMESCALE_HOST || 'timescaledb',
+                port: 5432,
+                database: 'timeseriesdb',
+                user: process.env.TIMESCALE_USER || 'dev',
+                password: process.env.TIMESCALE_PASSWORD || 'dev'
+            });
+
+            try {
+                const candlesResult = await tsPool.query(
+                    `SELECT * FROM market_klines 
+                   WHERE symbol = $1 AND time >= $2 AND time <= $3 ORDER BY time ASC`,
+                    [symbol.toUpperCase(), start_date, end_date]
+                );
+
+                processedCandles = resampleCandles(candlesResult.rows, timeframe);
+                console.log(`[Backtest] Loaded ${processedCandles.length} candles from TimescaleDB.`);
+            } finally {
+                await tsPool.end();
+            }
         }
 
         if (processedCandles.length < 50) {
-            return res.status(400).json({ error: "Insufficient historical data (checked Binance & DB)." });
+            return res.status(400).json({ error: "Insufficient historical data (min 50 candles required)." });
         }
 
-        // --- 2. FETCH PREDICTIONS & NEWS (Always from DB) ---
-        // Predictions need to be matched with candle times? Engine handles strict time checks.
-        // We fetch all predictions in range.
-        const predictionsQuery = `
-          SELECT time, direction_1h, confidence_1h, volatility
-          FROM ai_predictions
-          WHERE symbol = $1 AND time >= $2 AND time <= $3
-          ORDER BY time ASC
-        `;
+        // --- 2. FETCH AI PREDICTIONS & NEWS ---
+        // For backtest, we need ALL predictions in the date range, not just latest
+        // Query TimescaleDB directly for historical predictions
+        const { Pool } = require('pg');
+        const tsPool = new Pool({
+            host: process.env.TIMESCALE_HOST || 'timescaledb',
+            port: 5432,
+            database: 'timeseriesdb',
+            user: process.env.TIMESCALE_USER || 'dev',
+            password: process.env.TIMESCALE_PASSWORD || 'dev'
+        });
 
-        const newsQuery = `
-          SELECT time, sentiment_score, title
-          FROM news_sentiment
-          WHERE time >= $1 AND time <= $2
-          ORDER BY time ASC
-        `;
+        let predictions = [];
+        try {
+            const predictionsQuery = `
+              SELECT 
+                time,
+                symbol,
+                payload->'predictions'->0 as prediction_data
+              FROM ai_insights
+              WHERE type = 'aggregated_prediction'
+                AND time >= $1 AND time <= $2
+                AND symbol = $3
+              ORDER BY time ASC
+            `;
 
-        const [predictionsRes, newsRes] = await Promise.all([
-            db.query(predictionsQuery, [symbol.toUpperCase(), start_date, end_date]),
-            db.query(newsQuery, [start_date, end_date])
-        ]);
+            const predictionsRes = await tsPool.query(predictionsQuery, [start_date, end_date, symbol.toUpperCase()]);
 
-        console.log(`[BACKTEST] Aux Data: ${predictionsRes.rows.length} predictions, ${newsRes.rows.length} news items`);
+            predictions = predictionsRes.rows.map(row => ({
+                time: row.time,
+                forecast: row.prediction_data.forecast,
+                volatility: row.prediction_data.volatility,
+                direction: row.prediction_data.forecast?.next_1h?.direction,
+                confidence: row.prediction_data.forecast?.next_1h?.confidence
+            }));
+
+            console.log(`[BACKTEST] Loaded ${predictions.length} predictions from TimescaleDB`);
+        } catch (predErr) {
+            console.error('[BACKTEST] Failed to fetch predictions:', predErr.message);
+        }
+
+        // Fetch news sentiment data from TimescaleDB
+        let newsData = [];
+        try {
+            const newsPool = new Pool({
+                host: process.env.TIMESCALE_HOST || 'timescaledb',
+                port: 5432,
+                database: 'timeseriesdb',
+                user: process.env.TIMESCALE_USER || 'dev',
+                password: process.env.TIMESCALE_PASSWORD || 'dev'
+            });
+
+            const newsQuery = `
+              SELECT time, sentiment_score, title
+              FROM news_sentiment
+              WHERE time >= $1 AND time <= $2
+              ORDER BY time ASC
+            `;
+
+            const newsRes = await newsPool.query(newsQuery, [start_date, end_date]);
+            newsData = newsRes.rows;
+            console.log(`[BACKTEST] Loaded ${newsData.length} news items from TimescaleDB`);
+
+            await newsPool.end();
+        } catch (newsErr) {
+            console.warn('[BACKTEST] Failed to fetch news data:', newsErr.message);
+        }
+
+        console.log(`[BACKTEST] Aux Data: ${predictions.length} predictions, ${newsData.length} news items`);
 
         // --- 3. RUN ENGINE ---
         const engine = new BacktestEngine(
             strategy,
             {
                 candles: processedCandles,
-                predictions: predictionsRes.rows,
-                news: newsRes.rows
+                predictions: predictions,
+                news: newsData
             },
             initial_capital || 10000
         );
@@ -294,20 +329,20 @@ router.post('/run', requireAuth, async (req, res) => {
 
         // --- 4. SAVE RESULTS ---
         const insertQuery = `
-          INSERT INTO backtest_results (
-            user_id, strategy_name, strategy_config, symbol, start_date, end_date, initial_capital,
-            total_trades, winning_trades, losing_trades, win_rate, 
-            total_profit, total_loss, net_profit, net_profit_percent,
-            max_drawdown, sharpe_ratio, 
-            trades, equity_curve, execution_time_ms, data_points_analyzed
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7,
-            $8, $9, $10, $11,
-            $12, $13, $14, $15,
-            $16, $17,
-            $18, $19, $20, $21
-          ) RETURNING id
-        `;
+              INSERT INTO backtest_results (
+                user_id, strategy_name, strategy_config, symbol, start_date, end_date, initial_capital,
+                total_trades, winning_trades, losing_trades, win_rate, 
+                total_profit, total_loss, net_profit, net_profit_percent,
+                max_drawdown, sharpe_ratio, 
+                trades, equity_curve, execution_time_ms, data_points_analyzed
+              ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11,
+                $12, $13, $14, $15,
+                $16, $17,
+                $18, $19, $20, $21
+              ) RETURNING id
+            `;
 
         const saved = await db.query(insertQuery, [
             req.userId,
@@ -337,9 +372,11 @@ router.post('/run', requireAuth, async (req, res) => {
 
         res.json({ status: 'success', results, id: saved.rows[0].id });
 
+
     } catch (err) {
         console.error('Error running backtest:', err);
-        res.status(500).json({ error: 'An unexpected error occurred' });
+        res.status(500).json({ error: 'An unexpected error occurred', details: err.message });
     }
 });
+
 module.exports = router;

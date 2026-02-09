@@ -127,10 +127,7 @@ export default function InsightsList() {
 
     // Render aggregated prediction
     const renderAggregatedPrediction = () => {
-        console.log('[InsightsList] Rendering prediction, data:', aggregatedPrediction);
-
         if (!aggregatedPrediction) {
-            console.log('[InsightsList] No aggregated prediction data');
             return (
                 <div className="no-prediction">
                     <Zap size={24} style={{ opacity: 0.5 }} />
@@ -143,17 +140,9 @@ export default function InsightsList() {
         const payload = aggregatedPrediction.payload || {};
         const meta = payload.meta || {};
         const predictions = payload.predictions || [];
-
-        console.log('[InsightsList] Payload:', payload);
-        console.log('[InsightsList] Meta:', meta);
-        console.log('[InsightsList] Predictions:', predictions);
-
-        // Since we're fetching per-symbol, predictions array should have only 1 item
         const currentSymbolPred = predictions[0] || null;
-        console.log('[InsightsList] Current symbol prediction:', currentSymbolPred);
 
         if (!currentSymbolPred) {
-            console.warn('[InsightsList] No prediction data in payload');
             return (
                 <div className="no-prediction">
                     <AlertTriangle size={20} style={{ opacity: 0.5 }} />
@@ -166,49 +155,46 @@ export default function InsightsList() {
         const forecast1h = currentSymbolPred.forecast?.next_1h || {};
         const forecast24h = currentSymbolPred.forecast?.next_24h || {};
         const causal = currentSymbolPred.causal_analysis || {};
-        const sources = currentSymbolPred.sources || [];
+        const newsImpact = currentSymbolPred.news_impact_analysis || {};
+        const tech = currentSymbolPred.technical_indicators || {};
 
-        console.log('[InsightsList] Forecast 1h:', forecast1h);
-        console.log('[InsightsList] Forecast 24h:', forecast24h);
-        console.log('[InsightsList] Causal:', causal);
-        console.log('[InsightsList] Sources:', sources);
+        // Sentiment Badge Helper
+        const renderSentimentBadge = (label) => {
+            const l = (label || '').toUpperCase();
+            let className = 'neutral';
+            let icon = '➖';
+            if (l === 'BULLISH' || l === 'POSITIVE' || l === 'UP') { className = 'bullish'; icon = '🚀'; }
+            else if (l === 'BEARISH' || l === 'NEGATIVE' || l === 'DOWN') { className = 'bearish'; icon = '📉'; }
+            return <span className={`sentiment-badge ${className}`}>{icon} {label || 'NEUTRAL'}</span>;
+        };
 
         return (
             <div className="aggregated-prediction">
                 {/* Market Overview */}
                 <div className="market-overview">
                     <div className="overview-left">
-                        {getSentimentBadge(meta.market_sentiment_label)}
+                        {renderSentimentBadge(meta.market_sentiment_label || newsImpact.overall_sentiment)}
                         <span className="news-count">
-                            {meta.analyzed_articles || 0} tin tức
+                            {meta.analyzed_articles || 0} tin tức • RSI: {tech.rsi?.toFixed(1)}
                         </span>
                     </div>
                     <div className="overview-time">
-                        {new Date(aggregatedPrediction.time).toLocaleTimeString('vi-VN', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        })}
+                        {new Date(aggregatedPrediction.time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                 </div>
 
-                {/* Current Symbol Prediction - 1H Forecast */}
+                {/* 1H Forecast Block */}
                 <div className="current-symbol-pred">
-                    <div className="pred-header">Dự đoán {currentSymbol} - 1 Giờ Tới</div>
+                    <div className="pred-header">Dự đoán {currentSymbol} - 1H</div>
                     {(() => {
                         const currentPrice = currentSymbolPred.current_price || 0;
                         const expectedPrice = forecast1h.expected_price || 0;
                         const priceChange = expectedPrice - currentPrice;
                         const changePercent = currentPrice > 0 ? (priceChange / currentPrice) * 100 : 0;
 
-                        // Determine actual direction based on price change
                         let actualDirection = 'SIDEWAYS';
-                        if (Math.abs(changePercent) < 0.01) {
-                            actualDirection = 'SIDEWAYS';
-                        } else if (changePercent > 0) {
-                            actualDirection = 'UP';
-                        } else {
-                            actualDirection = 'DOWN';
-                        }
+                        if (changePercent > 0.05) actualDirection = 'UP';
+                        else if (changePercent < -0.05) actualDirection = 'DOWN';
 
                         const style = getDirectionStyle(actualDirection);
 
@@ -226,13 +212,10 @@ export default function InsightsList() {
                                 </div>
                                 <div className="pred-details">
                                     <span className="detail-item">
-                                        <strong>Giá ở lần phân tích:</strong> ${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <strong>Confidence:</strong> {forecast1h.confidence?.toFixed(1)}%
                                     </span>
                                     <span className="detail-item">
-                                        <strong>Độ tin cậy:</strong> {forecast1h.confidence?.toFixed(1)}%
-                                    </span>
-                                    <span className="detail-item">
-                                        <strong>Biến động:</strong> {forecast1h.volatility}
+                                        <strong>Volatility:</strong> {forecast1h.volatility}
                                     </span>
                                 </div>
                             </>
@@ -240,17 +223,14 @@ export default function InsightsList() {
                     })()}
                 </div>
 
-                {/* 24H Forecast */}
+                {/* 24H Forecast Block */}
                 <div className="forecast-24h">
-                    <div className="forecast-header">📅 Dự báo 24 Giờ</div>
+                    <div className="forecast-header">📅 Dự báo 24H (Swing)</div>
                     <div className="forecast-content">
                         {(() => {
                             const expectedPrice24h = forecast24h.expected_price || 0;
-                            const currentPrice = currentSymbolPred.current_price || 0;
-                            const priceChange24h = expectedPrice24h - currentPrice;
-                            const changePercent24h = forecast24h.price_change_percent ||
-                                (currentPrice > 0 ? (priceChange24h / currentPrice) * 100 : 0);
-
+                            const range = forecast24h.expected_range || {};
+                            const changePercent24h = forecast24h.price_change_percent || 0;
                             const style = getDirectionStyle(forecast24h.direction);
 
                             return (
@@ -262,96 +242,128 @@ export default function InsightsList() {
                                             {changePercent24h > 0 ? '+' : ''}{changePercent24h.toFixed(2)}%
                                         </span>
                                     </div>
-                                    {expectedPrice24h > 0 && (
-                                        <div className="price-target-24h">
-                                            <span className="target-label">Giá mục tiêu:</span>
-                                            <span className="target-value" style={{ color: style.color }}>
-                                                ${expectedPrice24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    <div className="price-target-24h">
+                                        <span className="target-label">Mục tiêu:</span>
+                                        <span className="target-value" style={{ color: style.color }}>
+                                            ${expectedPrice24h.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    {range.low && (
+                                        <div className="price-range">
+                                            <span className="range-label">Range:</span>
+                                            <span className="range-values">
+                                                ${range.low?.toLocaleString()} - ${range.high?.toLocaleString()}
                                             </span>
                                         </div>
                                     )}
-                                    {forecast24h.expected_range && (
-                                        <div className="price-range">
-                                            {/* <span className="range-label">Khoảng dao động:</span>
-                                            <span className="range-values">
-                                                ${forecast24h.expected_range.low?.toLocaleString()} - ${forecast24h.expected_range.high?.toLocaleString()}
-                                            </span> */}
-                                        </div>
-                                    )}
-                                    <div className="forecast-confidence">
-                                        Độ tin cậy: {forecast24h.confidence?.toFixed(1)}%
-                                    </div>
                                 </>
                             );
                         })()}
                     </div>
                 </div>
 
-                {/* NEW: Comprehensive Explanation (Single Paragraph) */}
-                {currentSymbolPred.explanation && (
+                {/* Causal Analysis - Deep Dive */}
+                {causal && (
+                    <div className="causal-analysis-section">
+                        <div className="section-header">🔍 Phân Tích Nguyên Nhân</div>
+
+                        {causal.key_event && (
+                            <div className="causal-item key-event">
+                                <div className="causal-label">📌 Sự kiện chính:</div>
+                                <div className="causal-value">{causal.key_event?.replace(/^(Sự kiện\/pattern chính bằng tiếng Việt:|Sự kiện chính:)\s*/i, '').trim()}</div>
+                            </div>
+                        )}
+
+                        {causal.causal_chain && (
+                            <div className="causal-chain-block">
+
+
+                            </div>
+                        )}
+
+
+                    </div>
+                )}
+
+                {/* Comprehensive Explanation */}
+                {(currentSymbolPred.explanation || causal.explanation_vi) && (
                     <div className="explanation-section">
                         <div className="explanation-header">
-                            <Zap size={14} />
-                            Phân Tích AI
+                            <Zap size={14} /> Tổng Hợp AI
                         </div>
                         <div className="explanation-content">
-                            {currentSymbolPred.explanation}
+                            {causal.explanation_vi || currentSymbolPred.explanation}
                         </div>
                     </div>
                 )}
 
-                {/* NEW: News Impact Analysis with LLM details */}
-                {currentSymbolPred.news_impact_analysis?.top_articles?.length > 0 && (
+                {/* News Impact Analysis */}
+                {newsImpact.top_articles?.length > 0 && (
                     <div className="news-impact-section">
-                        <div className="news-impact-header">
-                            📰 Tin Tức Tác Động ({currentSymbolPred.news_impact_analysis.overall_sentiment})
-                        </div>
-                        {currentSymbolPred.news_impact_analysis.top_articles.slice(0, 3).map((article, idx) => (
-                            <div key={idx} className="news-impact-item">
-                                <div className="news-impact-title">
-                                    {article.has_direct_mention && <span className="direct-badge">Trực tiếp</span>}
-                                    {article.title?.substring(0, 80)}{article.title?.length > 80 ? '...' : ''}
-                                </div>
-                                <div className="news-impact-meta">
-                                    <span className="news-source">{article.source}</span>
-                                    <span className={`sentiment-badge ${article.sentiment_score > 0.3 ? 'positive' : article.sentiment_score < -0.3 ? 'negative' : 'neutral'}`}>
-                                        {article.sentiment_score > 0.3 ? '📈' : article.sentiment_score < -0.3 ? '📉' : '➡️'}
-                                        {article.sentiment_score?.toFixed(2)}
-                                    </span>
-                                </div>
-                                {article.llm_analysis?.is_relevant && (
-                                    <div className="news-impact-analysis">
-                                        <div className="impact-mechanism">
-                                            <strong>Cơ chế:</strong> {article.llm_analysis.impact_mechanism}
-                                        </div>
-                                        {article.llm_analysis.key_quote && article.llm_analysis.key_quote !== article.title && (
-                                            <div className="impact-quote">
-                                                "{article.llm_analysis.key_quote?.substring(0, 150)}..."
-                                            </div>
-                                        )}
-                                        <div className="impact-prediction">
-                                            Tác động: <strong>{article.llm_analysis.predicted_impact}</strong>
+                        {/* <div className="news-impact-header">
+                            📰 Phân tích tin tức ({newsImpact.combined_impact || newsImpact.overall_sentiment})
+                        </div> */}
+                        {newsImpact.top_articles.map((article, idx) => {
+                            const hasLink = !!(article.url || article.link);
+                            const articleUrl = article.url || article.link;
+                            const llm = article.llm_analysis || {};
+
+                            return (
+                                <div
+                                    key={idx}
+                                    className={`news-impact-item ${hasLink ? 'clickable' : ''}`}
+                                    onClick={() => hasLink && window.open(articleUrl, '_blank')}
+                                    title={hasLink ? "Click để đọc bài báo gốc" : ""}
+                                    style={{ cursor: hasLink ? 'pointer' : 'default' }}
+                                >
+                                    <div className="news-title-row">
+                                        <div className="news-impact-title">
+                                            {article.has_direct_mention && <span className="direct-badge">Direct</span>}
+                                            {article.title}
+                                            {hasLink && <span className="link-icon"> 🔗</span>}
                                         </div>
                                     </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
 
-                {/* Legacy: News Sources (fallback if no news_impact_analysis) */}
-                {!currentSymbolPred.news_impact_analysis?.top_articles?.length && sources.length > 0 && (
-                    <div className="news-sources">
-                        <div className="sources-header">📰 Tin Tức Ảnh Hưởng</div>
-                        {sources.map((source, idx) => (
-                            <div key={idx} className="source-item">
-                                <div className="source-title">{source.title}</div>
-                                <div className="source-meta">
-                                    <span>{source.source}</span>
-                                    <span className="impact-score">Tác động: {source.impact_score}</span>
+                                    <div className="news-impact-meta">
+                                        <span className="news-source">{article.source}</span>
+                                        <span className="news-time">
+                                            {article.published_at ? new Date(article.published_at).toLocaleString('vi-VN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                                        </span>
+                                        <span className={`sentiment-badge ${article.sentiment_score > 0.1 ? 'positive' : article.sentiment_score < -0.1 ? 'negative' : 'neutral'}`}>
+                                            Score: {article.sentiment_score}
+                                        </span>
+                                    </div>
+
+                                    {/* Detailed LLM Analysis Grid */}
+                                    {llm.is_relevant && (
+                                        <div className="llm-analysis-grid">
+                                            {llm.summary && (
+                                                <div className="analysis-row summary">
+                                                    <strong>Tóm tắt:</strong> {llm.summary}
+                                                </div>
+                                            )}
+
+                                            <div className="analysis-metrics">
+                                                <div className="metric">
+                                                    <span className="label">Độ tin cậy:</span>
+                                                    <span className="value">{llm.confidence}</span>
+                                                </div>
+                                                <div className="metric">
+                                                    <span className="label">Tác động thời gian:</span>
+                                                    <span className="value">{llm.time_effect}</span>
+                                                </div>
+                                                <div className="metric">
+                                                    <span className="label">Dự báo:</span>
+                                                    <span className="value highlight">{llm.predicted_impact}</span>
+                                                </div>
+                                            </div>
+
+
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
 
@@ -1104,6 +1116,17 @@ export default function InsightsList() {
                     background: rgba(255, 255, 255, 0.02);
                     margin-bottom: 8px;
                     border-left: 3px solid rgba(59, 130, 246, 0.5);
+                    transition: all 0.2s ease;
+                }
+
+                .news-impact-item.clickable {
+                    cursor: pointer;
+                }
+
+                .news-impact-item.clickable:hover {
+                    background: rgba(255, 255, 255, 0.05);
+                    transform: translateX(2px);
+                    border-left-color: var(--accent-blue);
                 }
 
                 .news-impact-item:last-child {
@@ -1134,6 +1157,20 @@ export default function InsightsList() {
                     justify-content: space-between;
                     align-items: center;
                     margin-bottom: 8px;
+                    flex-wrap: wrap;
+                    gap: 4px;
+                }
+                
+                .meta-left {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    color: #888;
+                }
+
+                .news-time {
+                    font-size: 10px;
+                    color: #666;
                 }
 
                 .news-source {
@@ -1163,32 +1200,150 @@ export default function InsightsList() {
                     color: #9ca3af;
                 }
 
+                /* Enhanced News Impact + Causal Analysis CSS */
+                .causal-analysis-section {
+                    background: linear-gradient(135deg, rgba(8, 145, 178, 0.05), rgba(37, 99, 235, 0.05));
+                    border-radius: 8px;
+                    padding: 10px;
+                    border: 1px solid rgba(8, 145, 178, 0.2);
+                    margin-bottom: 8px;
+                }
+
+                .causal-item {
+                    margin-bottom: 8px;
+                }
+
+                .causal-label {
+                    font-size: 10px;
+                    color: #888;
+                    text-transform: uppercase;
+                    margin-bottom: 2px;
+                }
+
+                .causal-value {
+                    font-size: 12px;
+                    color: #e0e0e0;
+                    line-height: 1.4;
+                }
+
+                .causal-chain-block {
+                    margin-top: 10px;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 4px;
+                }
+
+                .chain-step {
+                    background: rgba(255, 255, 255, 0.03);
+                    border-radius: 6px;
+                    padding: 8px;
+                    width: 100%;
+                    border-left: 3px solid #666;
+                }
+
+                .chain-step p {
+                    margin: 4px 0 0;
+                    font-size: 11px;
+                    color: #ccc;
+                    line-height: 1.3;
+                }
+
+                .step-badge {
+                    font-size: 9px;
+                    text-transform: uppercase;
+                    padding: 2px 5px;
+                    border-radius: 3px;
+                    font-weight: 700;
+                }
+
+                .step-badge.cause { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border-left-color: #3b82f6; }
+                .step-badge.mechanism { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border-left-color: #f59e0b; }
+                .step-badge.effect { background: rgba(16, 185, 129, 0.2); color: #34d399; border-left-color: #10b981; }
+
+                .chain-arrow {
+                    font-size: 10px;
+                    color: #666;
+                    opacity: 0.5;
+                }
+
+                .actionable-advice-box {
+                    background: rgba(34, 197, 94, 0.05);
+                    border: 1px solid rgba(34, 197, 94, 0.2);
+                    border-radius: 6px;
+                    padding: 8px;
+                    margin-top: 10px;
+                }
+
+                .advice-title {
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #4ade80;
+                    text-transform: uppercase;
+                    margin-bottom: 4px;
+                }
+
+                .actionable-advice-box p {
+                    font-size: 11px;
+                    color: #d1fae5;
+                    margin: 0;
+                }
+
                 .news-impact-analysis {
                     background: rgba(0, 0, 0, 0.2);
                     border-radius: 4px;
                     padding: 8px;
-                    font-size: 10px;
-                }
-
-                .news-impact-analysis .impact-mechanism {
-                    color: #bbb;
-                    margin-bottom: 6px;
-                    line-height: 1.4;
-                }
-
-                .news-impact-analysis .impact-quote {
-                    color: #888;
-                    font-style: italic;
-                    padding-left: 8px;
-                    border-left: 2px solid rgba(59, 130, 246, 0.3);
-                    margin: 6px 0;
-                    line-height: 1.4;
-                }
-
-                .news-impact-analysis .impact-prediction {
-                    color: #ddd;
-                    font-weight: 600;
                     margin-top: 6px;
+                }
+
+                .llm-analysis-grid {
+                    display: grid;
+                    gap: 6px;
+                }
+
+                .analysis-row {
+                    font-size: 10px;
+                    color: #ccc;
+                    line-height: 1.4;
+                }
+
+                .analysis-row strong {
+                    color: #999;
+                    margin-right: 4px;
+                }
+
+                .analysis-metrics {
+                    display: flex;
+                    gap: 8px;
+                    background: rgba(255, 255, 255, 0.03);
+                    padding: 4px 6px;
+                    border-radius: 4px;
+                }
+
+                .metric {
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .metric .label {
+                    font-size: 8px;
+                    color: #777;
+                }
+
+                .metric .value {
+                    font-size: 10px;
+                    font-weight: 600;
+                    color: #ddd;
+                }
+
+                .metric .value.highlight {
+                    color: var(--accent-yellow);
+                }
+
+                .link-icon {
+                    font-size: 10px;
+                    margin-left: 4px;
+                    opacity: 0.7;
                 }
 
             `}</style>

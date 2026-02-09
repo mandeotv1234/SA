@@ -44,6 +44,9 @@ services:
       - name: api-route
         paths: ["/api"]
         strip_path: true
+      - name: insights-route
+        paths: ["/v1/insights"]
+        strip_path: false
       - name: backtest-route
         paths: ["/v1/backtest"]
         strip_path: false

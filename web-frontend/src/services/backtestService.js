@@ -7,7 +7,7 @@ const backtestService = {
     runBacktest: async (payload) => {
         // payload: { strategy, symbol, start_date, end_date, initial_capital }
         const token = localStorage.getItem('token');
-        const response = await axios.post(`${API_BASE}/v1/backtest/run`, payload, {
+        const response = await axios.post(`${API_BASE}/backtest-api/v1/backtest/run`, payload, {
             headers: {
                 Authorization: `Bearer ${token}`
             }
@@ -18,7 +18,7 @@ const backtestService = {
     // Get history
     getHistory: async () => {
         const token = localStorage.getItem('token');
-        const response = await axios.get(`${API_BASE}/v1/backtest/history`, {
+        const response = await axios.get(`${API_BASE}/backtest-api/v1/backtest/history`, {
             headers: {
                 Authorization: `Bearer ${token}`
             }
@@ -29,7 +29,7 @@ const backtestService = {
     // Get detail
     getDetail: async (id) => {
         const token = localStorage.getItem('token');
-        const response = await axios.get(`${API_BASE}/v1/backtest/${id}`, {
+        const response = await axios.get(`${API_BASE}/backtest-api/v1/backtest/${id}`, {
             headers: {
                 Authorization: `Bearer ${token}`
             }
